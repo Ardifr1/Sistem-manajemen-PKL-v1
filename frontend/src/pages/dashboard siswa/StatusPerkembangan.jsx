@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { journalsApi, assessmentsApi } from "../../api/index.js";
+import { journalsApi, assessmentsApi, finalAssessmentsApi } from "../../api/index.js";
 
 function mingguKe(start, date) {
   const diff = (new Date(date) - new Date(start)) / 86400000;
@@ -11,18 +11,22 @@ function StatusPerkembangan({ onMeta, placement }) {
   const navigate = useNavigate();
   const [journals, setJournals] = useState([]);
   const [evals, setEvals] = useState([]);
+  const [nilaiAkhir, setNilaiAkhir] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     onMeta?.({ title: "Status & Perkembangan", subtitle: "" });
     (async () => {
       try {
-        const [jRes, aRes] = await Promise.all([
+        const [jRes, aRes, fRes] = await Promise.all([
           journalsApi.index({ placement_id: placement?.id }).catch(() => ({ data: [] })),
           assessmentsApi.index().catch(() => ({ data: [] })),
+          placement?.id ? finalAssessmentsApi.index({ placement_id: placement.id }).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
         ]);
         setJournals(jRes?.data ?? []);
-        setEvals((aRes?.data ?? []).filter((a) => String(a.placement_id) === String(placement?.id) && a.assessor_role === "company"));
+        setEvals((aRes?.data ?? []).filter((a) => String(a.placement_id) === String(placement?.id) && a.assessor_role === "supervisor"));
+        const published = (fRes?.data ?? []).find((f) => f.status === "published");
+        setNilaiAkhir(published || null);
       } finally { setLoading(false); }
     })();
   }, [onMeta, placement?.id]);
@@ -41,20 +45,20 @@ function StatusPerkembangan({ onMeta, placement }) {
     journals.some((j) => mingguKe(start, j.journal_date) === m)
   );
 
-  // kompetensi dari evaluasi perusahaan (skala 1-4 → %)
-  const aspekLabel = { kedisiplinan: "Kedisiplinan", sikap: "Sikap & Tanggung Jawab", komunikasi: "Komunikasi & Kerja Sama", kompetensi: "Kompetensi Teknis", perkembangan: "Perkembangan Kompetensi" };
-  const kompetensi = Object.keys(aspekLabel).map((k) => {
-    const vals = evals.filter((e) => String(e.aspect || "").toLowerCase().includes(k)).map((e) => Number(e.score));
-    if (!vals.length) return null;
-    const rata = vals.reduce((a, b) => a + b, 0) / vals.length;
-    return { label: aspekLabel[k], pct: Math.round((rata / 4) * 100) };
-  }).filter(Boolean);
+  // kompetensi dari evaluasi pembimbing industri (skala 0-100 → %)
+  const kompetensi = evals.length ? (() => {
+    const byComp = {};
+    for (const e of evals) {
+      const label = e.component_name || e.component?.name || "Komponen";
+      (byComp[label] = byComp[label] || []).push(Number(e.score));
+    }
+    return Object.entries(byComp).map(([label, vals]) => {
+      const rata = vals.reduce((a, b) => a + b, 0) / vals.length;
+      return { label, pct: Math.max(0, Math.min(100, Math.round(rata))) };
+    });
+  })() : [];
 
-  const kompetensiTampil = kompetensi.length > 0 ? kompetensi : [
-    { label: "Backend • Laravel", pct: 85 },
-    { label: "Git & Kolaborasi Tim", pct: 78 },
-    { label: "Komunikasi & Laporan", pct: 80 },
-  ];
+  const kompetensiTampil = kompetensi;
 
   const nilaiTerkunci = placement?.status !== "completed";
 
@@ -88,7 +92,9 @@ function StatusPerkembangan({ onMeta, placement }) {
             <h3 className="siswa-card-title">Kompetensi</h3>
             <span className="siswa-muted" style={{ fontSize: 12 }}>Penilaian pembimbing industri</span>
           </div>
-          {loading ? <p className="siswa-muted">Memuat…</p> : kompetensiTampil.map((k) => (
+          {loading ? <p className="siswa-muted">Memuat…</p> : kompetensiTampil.length === 0 ? (
+            <p className="siswa-muted">Belum ada penilaian pembimbing industri.</p>
+          ) : kompetensiTampil.map((k) => (
             <div key={k.label} style={{ marginBottom: 16 }}>
               <div className="siswa-between" style={{ marginBottom: 6 }}>
                 <b style={{ fontSize: 13.5, color: "#0f172a" }}>{k.label}</b>
@@ -104,15 +110,28 @@ function StatusPerkembangan({ onMeta, placement }) {
         <div className="siswa-card" style={{ textAlign: "center" }}>
           <div className="siswa-between" style={{ marginBottom: 16, textAlign: "left" }}>
             <h3 className="siswa-card-title">Nilai Akhir</h3>
-            <span className="siswa-badge s-badge-gray"><span className="dot"></span>Terkunci</span>
+            {nilaiAkhir ? (
+              <span className="siswa-badge s-badge-green"><span className="dot"></span>Dipublikasikan</span>
+            ) : (
+              <span className="siswa-badge s-badge-gray"><span className="dot"></span>Terkunci</span>
+            )}
           </div>
-          <div style={{ padding: "12px 0 20px" }}>
-            <span className="siswa-modal-ic" style={{ background: "#f1f5f9", color: "#94a3b8", margin: "0 auto 14px" }}>
-              <i className="fa-solid fa-lock"></i>
-            </span>
-            <b style={{ display: "block", fontSize: 14, color: "#0f172a", marginBottom: 6 }}>Nilai akhir belum tersedia</b>
-            <p className="siswa-muted" style={{ margin: 0 }}>Tampil setelah penilaian guru selesai dan PKL dinyatakan selesai.</p>
-          </div>
+          {nilaiAkhir ? (
+            <div style={{ padding: "12px 0 20px" }}>
+              <div style={{ fontSize: 52, fontWeight: 800, color: "#16a34a", lineHeight: 1 }}>
+                {nilaiAkhir.final_score}
+              </div>
+              <p className="siswa-muted" style={{ margin: "8px 0 0" }}>Skala 0–100 • dihitung otomatis dari bobot komponen</p>
+            </div>
+          ) : (
+            <div style={{ padding: "12px 0 20px" }}>
+              <span className="siswa-modal-ic" style={{ background: "#f1f5f9", color: "#94a3b8", margin: "0 auto 14px" }}>
+                <i className="fa-solid fa-lock"></i>
+              </span>
+              <b style={{ display: "block", fontSize: 14, color: "#0f172a", marginBottom: 6 }}>Nilai akhir belum tersedia</b>
+              <p className="siswa-muted" style={{ margin: 0 }}>Tampil setelah PKL selesai dan nilai dipublikasikan guru.</p>
+            </div>
+          )}
         </div>
 
         <div className="siswa-card">

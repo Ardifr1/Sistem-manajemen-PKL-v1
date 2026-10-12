@@ -425,3 +425,18 @@
 .riwayat-empty{padding:32px 20px;text-align:center}
 .riwayat-empty b{display:block;font-size:15px;color:#0f172a;margin:10px 0 6px}
 .riwayat-empty p{margin:0;font-size:13px;color:#64748b;line-height:1.5;max-width:280px;margin:0 auto}
+
+/* --- modal detail perusahaan --- */
+.siswa-modal-detail{max-width:520px;text-align:left;position:relative}
+.siswa-modal-x{position:absolute;top:14px;right:14px;border:0;background:#f1f5f9;color:#64748b;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:14px}
+.siswa-modal-x:hover{background:#e2e8f0;color:#0f172a}
+.siswa-detail-desc{font-size:13.5px;color:#475569;line-height:1.65;margin:10px 0 14px}
+.siswa-detail-kv{display:grid;gap:8px;margin-bottom:14px}
+.siswa-detail-kv div{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:#334155}
+.siswa-detail-kv i{color:#2563eb;width:16px;margin-top:2px}
+.siswa-detail-sec{margin-bottom:14px}
+.siswa-detail-sec>b{font-size:13.5px;color:#0f172a;display:block;margin-bottom:8px}
+.siswa-detail-sec>b i{color:#2563eb;margin-right:6px}
+.siswa-doc-list{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+.siswa-doc-list li{display:flex;align-items:center;gap:10px;font-size:13.5px;color:#334155;background:#f8fafc;border:1px solid #eef2f7;border-radius:10px;padding:9px 12px}
+.siswa-doc-list li i{color:#16a34a}

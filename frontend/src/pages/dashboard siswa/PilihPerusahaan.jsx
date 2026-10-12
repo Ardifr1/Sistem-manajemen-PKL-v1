@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { companiesApi, applicationsApi, authApi } from "../../api/index.js";
 import { SkelCards } from "../../components/role/skeleton.jsx";
+import { DetailPerusahaan } from "../../components/role/detail-perusahaan.jsx";
 
 /* ================= PILIH PERUSAHAAN ================= */
 function PilihPerusahaan({ onMeta }) {
@@ -12,6 +13,7 @@ function PilihPerusahaan({ onMeta }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(null);
   const [msg, setMsg] = useState("");
+  const [detail, setDetail] = useState(null);
 
   useEffect(() => {
     onMeta?.({ title: "Pilih Perusahaan", subtitle: "Tentukan tempat PKL impianmu" });
@@ -85,15 +87,21 @@ function PilihPerusahaan({ onMeta }) {
                     <span className={`siswa-badge ${pct >= 100 ? "s-badge-red" : "s-badge-green"}`}>
                       <span className="dot"></span>{pct >= 100 ? "Penuh" : "Tersedia"}
                     </span>
-                    {diajukan ? (
-                      <span className="siswa-badge s-badge-blue"><span className="dot"></span>Sudah Diajukan</span>
-                    ) : (
-                      <button type="button" className="siswa-btn siswa-btn-primary siswa-btn-sm"
-                        disabled={sending === c.id || pct >= 100}
-                        onClick={() => ajukan(c)}>
-                        {sending === c.id ? "Mengirim…" : "Ajukan"}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button type="button" className="siswa-btn siswa-btn-outline siswa-btn-sm"
+                        onClick={() => setDetail(c)}>
+                        Detail
                       </button>
-                    )}
+                      {diajukan ? (
+                        <span className="siswa-badge s-badge-blue"><span className="dot"></span>Sudah Diajukan</span>
+                      ) : (
+                        <button type="button" className="siswa-btn siswa-btn-primary siswa-btn-sm"
+                          disabled={sending === c.id || pct >= 100}
+                          onClick={() => ajukan(c)}>
+                          {sending === c.id ? "Mengirim…" : "Ajukan"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -101,6 +109,7 @@ function PilihPerusahaan({ onMeta }) {
           </div>
         )}
       </div>
+      {detail && <DetailPerusahaan c={detail} onClose={() => setDetail(null)} onAjukan={(c) => { setDetail(null); ajukan(c); }} diajukan={sudahDiajukan(detail.id)} sending={sending === detail.id} />}
       <div style={{ textAlign: "center" }}>
         <button type="button" className="siswa-btn siswa-btn-outline" onClick={() => navigate("/siswa/pengajuan")}>
           Lihat Pengajuanku <i className="fa-solid fa-arrow-right"></i>
