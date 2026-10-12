@@ -12,7 +12,7 @@ class AssessmentPolicy
 
     public function viewAny(User $user): bool
     {
-        return in_array($user->role, ['admin', 'teacher', 'student'], true);
+        return in_array($user->role, ['admin', 'teacher', 'student', 'supervisor', 'company'], true);
     }
 
     public function view(User $user, Assessment $assessment): bool
@@ -26,6 +26,12 @@ class AssessmentPolicy
                 && $assessment->placement->student_id === $user->id;
         }
 
+        if ($user->role === 'supervisor') {
+            return $assessment->placement
+                && $user->companySupervisor
+                && $assessment->placement->supervisor_id === $user->companySupervisor->id;
+        }
+
         if ($user->role === 'company') {
             return $assessment->placement
                 && $this->isAuthorizedForCompany($user, $assessment->placement->company_id);
@@ -36,7 +42,7 @@ class AssessmentPolicy
 
     public function create(User $user): bool
     {
-        return in_array($user->role, ['teacher', 'company'], true);
+        return in_array($user->role, ['teacher', 'supervisor'], true);
     }
 
     public function update(User $user, Assessment $assessment): bool
@@ -46,7 +52,7 @@ class AssessmentPolicy
         }
 
         // Hanya penilai aslinya yang boleh mengubah penilaian.
-        if (in_array($user->role, ['teacher', 'company'], true)) {
+        if (in_array($user->role, ['teacher', 'supervisor'], true)) {
             return $assessment->assessed_by === $user->id;
         }
 
@@ -59,7 +65,7 @@ class AssessmentPolicy
             return true;
         }
 
-        if (in_array($user->role, ['teacher', 'company'], true)) {
+        if (in_array($user->role, ['teacher', 'supervisor'], true)) {
             return $assessment->assessed_by === $user->id;
         }
 

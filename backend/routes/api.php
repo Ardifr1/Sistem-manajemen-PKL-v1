@@ -24,6 +24,7 @@ use App\Http\Controllers\AssessmentController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 
 Route::middleware('auth:sanctum')->group(function () {
 
@@ -68,10 +69,18 @@ Route::middleware('auth:sanctum')->group(function () {
     );
 
     Route::apiResource('assessments', AssessmentController::class);
+    Route::post('/final-assessments/calculate', [FinalAssessmentController::class, 'calculate']);
+    Route::post('/final-assessments/{finalAssessment}/publish', [FinalAssessmentController::class, 'publish']);
+    Route::post('/final-assessments/{finalAssessment}/unpublish', [FinalAssessmentController::class, 'unpublish']);
+    // Tanpa 'store': final_score hanya dari perhitungan otomatis (calculate),
+    // tidak dari nilai yang dikirim frontend.
+    Route::apiResource('final-assessments', FinalAssessmentController::class)->only(['index', 'show', 'update', 'destroy']);
     // Profile
     Route::apiResource('student-profiles', StudentProfileController::class);
     // User
     Route::middleware('role:admin,company,supervisor,teacher')->group(function () {
     Route::apiResource('users', UserController::class);
+    Route::get('/password-reset-requests', [UserController::class, 'resetRequests']);
+    Route::patch('/password-reset-requests/{resetRequest}', [UserController::class, 'resolveResetRequest']);
 });
 });

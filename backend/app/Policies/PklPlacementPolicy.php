@@ -29,6 +29,11 @@ class PklPlacementPolicy
             return $this->isAuthorizedForCompany($user, $placement->company_id);
         }
 
+        if ($user->role === 'supervisor') {
+            return $user->companySupervisor
+                && $placement->supervisor_id === $user->companySupervisor->id;
+        }
+
         return false;
     }
 
