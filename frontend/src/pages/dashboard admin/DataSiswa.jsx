@@ -85,7 +85,7 @@ function DataSiswa({ onMeta }) {
   if (detail) {
     const pl = detail.placement;
     return (
-      <div className="zip-page">
+      <div className="zip-page has-m-cards">
         <div className="zip-toolbar">
           <button type="button" className="zip-btn-outline" onClick={() => setDetail(null)}>
             ← Kembali
