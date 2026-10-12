@@ -44,8 +44,14 @@ class AssessmentController extends Controller
                     $q->where('student_id', $user->id);
                 } elseif ($user->role === 'teacher') {
                     $q->where('teacher_id', $user->id);
+                } elseif ($user->role === 'supervisor') {
+                    $supervisorId = $user->companySupervisor?->id;
+                    $q->where('supervisor_id', $supervisorId);
+                } elseif ($user->role === 'company') {
+                    $companyId = $user->companySupervisor?->company_id;
+                    $q->where('company_id', $companyId);
                 }
-                // admin & supervisor: semua (Gate viewAny sudah mengatur akses)
+                // admin: semua (Gate viewAny sudah mengatur akses)
             });
         }
 

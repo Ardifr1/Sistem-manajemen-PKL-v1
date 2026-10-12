@@ -57,6 +57,11 @@ class AssessmentComponentController extends Controller
                 'min:0',
                 'max:100',
             ],
+            'assessor_role' => [
+                'required',
+                'string',
+                Rule::in(['teacher', 'supervisor']),
+            ],
             'is_active' => [
                 'boolean',
             ],
@@ -94,6 +99,11 @@ class AssessmentComponentController extends Controller
                 'numeric',
                 'min:0',
                 'max:100',
+            ],
+            'assessor_role' => [
+                'sometimes',
+                'string',
+                Rule::in(['teacher', 'supervisor']),
             ],
             'is_active' => [
                 'sometimes',

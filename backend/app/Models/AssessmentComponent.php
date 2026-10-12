@@ -10,6 +10,7 @@ class AssessmentComponent extends Model
         'name',
         'description',
         'weight',
+        'assessor_role',
         'is_active',
     ];
 

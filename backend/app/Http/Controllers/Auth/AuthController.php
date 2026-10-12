@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\PasswordResetRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -57,6 +58,33 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Logout berhasil.'
+        ]);
+    }
+
+    /**
+     * Permintaan reset password — publik. Admin menindaklanjuti
+     * lewat halaman Pengguna (reset manual).
+     */
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $request->validate(['username' => 'required|string']);
+
+        $user = User::where('username', $request->username)
+            ->orWhere('email', $request->username)
+            ->first();
+
+        // Selalu balas sukses agar tidak membocorkan akun yang terdaftar.
+        if ($user && $user->is_active) {
+            $exists = PasswordResetRequest::where('user_id', $user->id)
+                ->where('status', 'pending')
+                ->exists();
+            if (!$exists) {
+                PasswordResetRequest::create(['user_id' => $user->id]);
+            }
+        }
+
+        return response()->json([
+            'message' => 'Permintaan terkirim. Hubungi admin sekolah untuk mendapatkan password baru.',
         ]);
     }
 }

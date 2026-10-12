@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\PasswordResetRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -215,6 +216,38 @@ class UserController extends Controller
 
         return response()->json([
             'message' => 'Pengguna berhasil dihapus.',
+        ]);
+    }
+
+    /** Daftar permintaan reset password (khusus admin). */
+    public function resetRequests(Request $request): JsonResponse
+    {
+        if ($request->user()->role !== 'admin') {
+            return response()->json(['message' => 'Akses ditolak.'], 403);
+        }
+
+        $rows = PasswordResetRequest::with('user:id,name,username,email,role')
+            ->where('status', 'pending')
+            ->orderByDesc('created_at')
+            ->get();
+
+        return response()->json([
+            'message' => 'Data permintaan reset berhasil diambil.',
+            'data' => $rows,
+        ]);
+    }
+
+    /** Tandai permintaan reset selesai (khusus admin). */
+    public function resolveResetRequest(Request $request, PasswordResetRequest $resetRequest): JsonResponse
+    {
+        if ($request->user()->role !== 'admin') {
+            return response()->json(['message' => 'Akses ditolak.'], 403);
+        }
+
+        $resetRequest->update(['status' => 'done']);
+
+        return response()->json([
+            'message' => 'Permintaan ditandai selesai.',
         ]);
     }
 }
