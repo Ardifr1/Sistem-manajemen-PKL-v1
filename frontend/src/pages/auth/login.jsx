@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import "./login.css";
 import { authApi } from "../../api/index.js";
 
@@ -153,9 +153,9 @@ function Login() {
                 />
                 Ingat saya
               </label>
-              <a className="forgot" href="/login">
+              <Link className="forgot" to="/lupa-password">
                 Lupa password?
-              </a>
+              </Link>
             </div>
 
             <button type="submit" className="btn-primary" disabled={loading}>

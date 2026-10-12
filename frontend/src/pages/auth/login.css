@@ -320,3 +320,14 @@
     font-size: 15px;
   }
 }
+
+.login-success {
+  margin-top: 4px;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #15803d;
+  font-size: 13.5px;
+  border-radius: 8px;
+  padding: 12px 14px;
+  line-height: 1.6;
+}
