@@ -34,6 +34,18 @@ export const PAGE_META = {
     title: "Monitoring Jurnal",
     subtitle: "Verifikasi jurnal per perusahaan",
   },
+  komponen: {
+    title: "Komponen Penilaian",
+    subtitle: "Bobot & peran penilai",
+  },
+  feedback: {
+    title: "Review Feedback",
+    subtitle: "Setujui/tolak feedback siswa",
+  },
+  publikasi: {
+    title: "Publikasi Nilai",
+    subtitle: "Terbitkan / batalkan nilai akhir",
+  },
   profil: {
     title: "Profil Saya",
     subtitle: "Data diri administrator",
@@ -54,6 +66,9 @@ const MENUS = [
     { key: "periode", label: "Periode PKL", icon: "fa-calendar-days" },
     { key: "persetujuan", label: "Persetujuan", icon: "fa-clipboard-check" },
     { key: "jurnal", label: "Monitoring Jurnal", icon: "fa-book-open" },
+    { key: "komponen", label: "Komponen Penilaian", icon: "fa-list-check" },
+    { key: "feedback", label: "Review Feedback", icon: "fa-comments" },
+    { key: "publikasi", label: "Publikasi Nilai", icon: "fa-bullhorn" },
   ]},
 ];
 
