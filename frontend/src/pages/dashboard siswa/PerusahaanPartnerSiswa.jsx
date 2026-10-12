@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { companiesApi } from "../../api/index.js";
+import { DetailPerusahaan } from "../../components/role/detail-perusahaan.jsx";
 
 /**
  * Daftar perusahaan mitra. Prop `readonly` dipakai untuk arsip fase 2.
@@ -8,6 +9,7 @@ function PerusahaanPartnerSiswa({ onMeta, readonly = false }) {
   const [companies, setCompanies] = useState([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState(null);
 
   useEffect(() => {
     onMeta?.({ title: "Perusahaan Partner", subtitle: readonly ? "Arsip — read only" : "Daftar perusahaan mitra sekolah" });
@@ -60,10 +62,14 @@ function PerusahaanPartnerSiswa({ onMeta, readonly = false }) {
                     {c.required_skills ? ` • ${c.required_skills}` : ""}
                   </div>
                   <div className="siswa-quota"><i style={{ width: `${Math.min(pct, 100)}%` }}></i></div>
-                  <div className="siswa-mt">
+                  <div className="siswa-between siswa-mt">
                     <span className={`siswa-badge ${pct >= 100 ? "s-badge-red" : "s-badge-green"}`}>
                       <span className="dot"></span>{pct >= 100 ? "Penuh" : "Tersedia"}
                     </span>
+                    <button type="button" className="siswa-btn siswa-btn-outline siswa-btn-sm"
+                      onClick={() => setDetail(c)}>
+                      Detail
+                    </button>
                   </div>
                 </div>
               );
@@ -71,6 +77,7 @@ function PerusahaanPartnerSiswa({ onMeta, readonly = false }) {
           </div>
         )}
       </div>
+      {detail && <DetailPerusahaan c={detail} onClose={() => setDetail(null)} hideAjukan />}
     </div>
   );
 }
