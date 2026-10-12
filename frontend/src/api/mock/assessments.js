@@ -67,3 +67,18 @@ const components = [
   { id: 6, name: "Perkembangan Kompetensi", weight: 10, is_active: true },
 ];
 export const componentsApi = crud(components, "Komponen penilaian", "komponen penilaian");
+export const finalAssessmentsApi = {
+  ...crud([], "Penilaian akhir", "penilaian akhir"),
+  calculate: async (placement_id) => {
+    void placement_id;
+    return { message: "Mode mock: perhitungan otomatis tidak tersedia.", data: null };
+  },
+  publish: async (id) => {
+    void id;
+    return { message: "Mode mock: publikasi tidak tersedia.", data: null };
+  },
+  unpublish: async (id, note) => {
+    void id; void note;
+    return { message: "Mode mock: pembatalan publikasi tidak tersedia.", data: null };
+  },
+};

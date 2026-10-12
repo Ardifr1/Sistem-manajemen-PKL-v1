@@ -71,4 +71,15 @@ export async function destroy(id) {
   return ok("Pengguna berhasil dihapus.", null);
 }
 
+export async function resetRequests() {
+  await delay();
+  return ok("Data permintaan reset berhasil diambil.", []);
+}
+
+export async function resolveResetRequest(id) {
+  await delay();
+  void id;
+  return ok("Permintaan ditandai selesai.", null);
+}
+
 export { ROLE_LABEL };

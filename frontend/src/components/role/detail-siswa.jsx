@@ -25,7 +25,7 @@ function Stars({ value }) {
  * variant "guru": Riwayat jurnal (read-only) + Evaluasi perusahaan (ringkas)
  * variant "industri": Jurnal terakhir + Perkembangan
  */
-function DetailSiswa({ placement: p, journals, variant = "guru", onBack }) {
+function DetailSiswa({ placement: p, journals, attendances = [], variant = "guru", onBack }) {
   const [assessments, setAssessments] = useState([]);
   const [components, setComponents] = useState([]);
 
@@ -120,6 +120,30 @@ function DetailSiswa({ placement: p, journals, variant = "guru", onBack }) {
             </div>
           </div>
         ) : (
+          <>
+          <div className="zip-card">
+            <h4>Rekap Absensi</h4>
+            {attendances.length === 0 ? (
+              <div className="zip-muted">Belum ada data absensi.</div>
+            ) : (
+              <div className="ds-rows">
+                {["hadir", "izin", "sakit", "alpa"].map((st) => {
+                  const n = attendances.filter((a) => String(a.status).toLowerCase() === st).length;
+                  return (
+                    <div className="ds-row" key={st}>
+                      <span className={`zip-badge ${st === "hadir" ? "b-green" : st === "alpa" ? "b-red" : "b-amber"}`}>
+                        {st.charAt(0).toUpperCase() + st.slice(1)}
+                      </span>
+                      <b style={{ marginLeft: 8 }}>{n}</b>
+                    </div>
+                  );
+                })}
+                <div className="zip-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                  Total {attendances.length} catatan kehadiran
+                </div>
+              </div>
+            )}
+          </div>
           <div className="zip-card">
             <h4>Perkembangan</h4>
             <div className="zip-muted">
@@ -132,6 +156,7 @@ function DetailSiswa({ placement: p, journals, variant = "guru", onBack }) {
               Lihat verifikasi untuk aksi Setujui/Revisi.
             </div>
           </div>
+          </>
         )}
       </div>
     </div>

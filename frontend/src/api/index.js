@@ -68,6 +68,7 @@ export const attendancesApi = pick(attendancesMock, attendancesLive);
 export const feedbacksApi = pick(feedbacksMock, feedbacksLive);
 export const assessmentsApi = pick(assessmentsMock, assessmentsLive);
 export const componentsApi = pick(assessmentsMock, assessmentsLive).componentsApi;
+export const finalAssessmentsApi = pick(assessmentsMock, assessmentsLive).finalAssessmentsApi;
 export const profilesApi = pick(profilesMock, profilesLive);
 export const usersApi = pick(usersMock, usersLive);
 export const dashboardApi = pick(dashboardMock, dashboardLive);

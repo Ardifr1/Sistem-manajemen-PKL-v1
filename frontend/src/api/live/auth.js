@@ -38,6 +38,11 @@ export async function logout() {
   return { message: "Logout berhasil.", data: null };
 }
 
+export async function forgotPassword(username) {
+  const res = await client.post(ep.auth.forgotPassword, { username });
+  return res;
+}
+
 export function currentUser() {
   try {
     return JSON.parse(localStorage.getItem(USER_KEY) || "null");
