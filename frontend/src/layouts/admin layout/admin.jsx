@@ -34,6 +34,10 @@ export const PAGE_META = {
     title: "Monitoring Jurnal",
     subtitle: "Verifikasi jurnal per perusahaan",
   },
+  penilaian: {
+    title: "Penilaian Akhir",
+    subtitle: "Komponen bobot • publikasi nilai",
+  },
   profil: {
     title: "Profil Saya",
     subtitle: "Data diri administrator",
@@ -54,6 +58,7 @@ const MENUS = [
     { key: "periode", label: "Periode PKL", icon: "fa-calendar-days" },
     { key: "persetujuan", label: "Persetujuan", icon: "fa-clipboard-check" },
     { key: "jurnal", label: "Monitoring Jurnal", icon: "fa-book-open" },
+    { key: "penilaian", label: "Penilaian Akhir", icon: "fa-award" },
   ]},
 ];
 

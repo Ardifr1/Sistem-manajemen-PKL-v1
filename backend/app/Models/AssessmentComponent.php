@@ -9,6 +9,7 @@ class AssessmentComponent extends Model
     protected $fillable = [
         'name',
         'description',
+        'owner_type',
         'weight',
         'is_active',
     ];

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Assessment;
+use App\Models\AssessmentComponent;
 use App\Models\PklPlacement;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -44,8 +45,30 @@ class AssessmentController extends Controller
                     $q->where('student_id', $user->id);
                 } elseif ($user->role === 'teacher') {
                     $q->where('teacher_id', $user->id);
+                } elseif ($user->role === 'supervisor') {
+                    $supervisor = $user->companySupervisor;
+                    if ($supervisor) {
+                        $q->where(function ($w) use ($supervisor) {
+                            $w->where('supervisor_id', $supervisor->id)
+                                ->orWhere(function ($x) use ($supervisor) {
+                                    $x->whereNull('supervisor_id')
+                                        ->where('company_id', $supervisor->company_id);
+                                });
+                        });
+                    } else {
+                        $q->whereRaw('1 = 0');
+                    }
+                } elseif ($user->role === 'company') {
+                    // Scope index company ke perusahaannya sendiri, konsisten
+                    // dengan AssessmentPolicy::view (per-placement).
+                    $companyId = $user->companySupervisor?->company_id;
+                    if ($companyId) {
+                        $q->where('company_id', $companyId);
+                    } else {
+                        $q->whereRaw('1 = 0');
+                    }
                 }
-                // admin & supervisor: semua (Gate viewAny sudah mengatur akses)
+                // admin: semua
             });
         }
 
@@ -100,15 +123,57 @@ class AssessmentController extends Controller
             ],
         ]);
 
-        // Penilaian selalu tercatat atas nama penilai yang sedang login.
-        $validated['assessed_by'] = $request->user()->id;
-        $validated['assessor_role'] = $request->user()->role;
-
+        $user = $request->user();
         $placement = PklPlacement::findOrFail($validated['placement_id']);
+        $component = AssessmentComponent::findOrFail($validated['component_id']);
 
-        if (! Gate::forUser($request->user())->check('view', $placement)) {
+        // Komponen nonaktif tidak boleh dinilai.
+        if (! $component->is_active) {
+            return response()->json([
+                'message' => 'Komponen penilaian sudah tidak aktif.',
+            ], 422);
+        }
+
+        // Guru Pembimbing hanya boleh mengisi komponen milik guru.
+        if ($user->role === 'teacher' && $component->owner_type !== 'guru') {
+            return response()->json([
+                'message' => 'Guru hanya boleh mengisi komponen penilaian milik Guru Pembimbing.',
+            ], 403);
+        }
+
+        // Pembimbing Industri (role company/supervisor) hanya boleh mengisi
+        // komponen milik industri.
+        if (in_array($user->role, ['company', 'supervisor'], true) && $component->owner_type !== 'industri') {
+            return response()->json([
+                'message' => 'Pembimbing Industri hanya boleh mengisi komponen penilaian milik Industri.',
+            ], 403);
+        }
+
+        // Pembimbing Industri (role supervisor) hanya boleh menilai siswa
+        // yang ditugaskan kepadanya.
+        if ($user->role === 'supervisor') {
+            $supervisor = $user->companySupervisor;
+
+            if (! $supervisor) {
+                abort(403);
+            }
+
+            if ($placement->supervisor_id !== null) {
+                if ((int) $placement->supervisor_id !== (int) $supervisor->id) {
+                    abort(403);
+                }
+            } elseif ((int) $placement->company_id !== (int) $supervisor->company_id) {
+                abort(403);
+            }
+        } elseif (! Gate::forUser($user)->check('view', $placement)) {
             abort(403);
         }
+
+        // Penilaian selalu tercatat atas nama penilai yang sedang login.
+        // assessor_role dikunci dari role login — request tidak boleh
+        // memalsukannya.
+        $validated['assessed_by'] = $user->id;
+        $validated['assessor_role'] = $user->role;
 
         $existingAssessment = Assessment::query()
             ->where('placement_id', $validated['placement_id'])

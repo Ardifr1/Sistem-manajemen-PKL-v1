@@ -17,6 +17,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             TestAccountsSeeder::class,
+            AssessmentComponentSeeder::class,
         ]);
     }
 }

@@ -116,6 +116,19 @@ export const ep = {
     update: id("/assessments"),
     destroy: id("/assessments"),
   },
+  finalAssessments: {
+    index: "/final-assessments",
+    show: id("/final-assessments"),
+    store: "/final-assessments",
+    update: id("/final-assessments"),
+    destroy: id("/final-assessments"),
+    publish: (fid) => `/final-assessments/${fid}/publish`,
+    unpublish: (fid) => `/final-assessments/${fid}/unpublish`,
+  },
+  auditLogs: {
+    index: "/audit-logs",
+    show: id("/audit-logs"),
+  },
   studentProfiles: {
     index: "/student-profiles",
     show: id("/student-profiles"),

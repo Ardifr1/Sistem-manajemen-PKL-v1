@@ -29,6 +29,23 @@ class PklPlacementPolicy
             return $this->isAuthorizedForCompany($user, $placement->company_id);
         }
 
+        if ($user->role === 'supervisor') {
+            $supervisor = $user->companySupervisor;
+
+            if (! $supervisor) {
+                return false;
+            }
+
+            // Pembimbing industri hanya boleh mengakses siswa yang
+            // ditugaskan kepadanya; bila placement belum menetapkan
+            // supervisor spesifik, batasi lingkup perusahaan sebagai fallback.
+            if ($placement->supervisor_id !== null) {
+                return (int) $placement->supervisor_id === (int) $supervisor->id;
+            }
+
+            return (int) $placement->company_id === (int) $supervisor->company_id;
+        }
+
         return false;
     }
 

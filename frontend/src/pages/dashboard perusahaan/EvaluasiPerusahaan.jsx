@@ -1,16 +1,9 @@
 import { useEffect, useState } from "react";
-import { placementsApi, assessmentsApi } from "../../api/index.js";
+import { placementsApi, assessmentsApi, componentsApi } from "../../api/index.js";
 
-/* Evaluasi perusahaan — 6 aspek skala 1-4 + catatan (sesuai PRD §14a). */
-
-const ASPEK = [
-  { key: "kedisiplinan", label: "Kedisiplinan", desc: "Ketepatan waktu dan kepatuhan pada aturan kerja" },
-  { key: "sikap", label: "Sikap", desc: "Etika, kesopanan dalam bekerja" },
-  { key: "tanggung_jawab", label: "Tanggung Jawab", desc: "Tanggung jawab terhadap tugas yang diberikan" },
-  { key: "komunikasi", label: "Komunikasi", desc: "Kemampuan berkomunikasi dan bekerja dengan tim" },
-  { key: "kemampuan_kerja", label: "Kemampuan Kerja", desc: "Kemampuan mengerjakan tugas sesuai bidang PKL" },
-  { key: "perkembangan", label: "Perkembangan Kompetensi", desc: "Peningkatan kemampuan dari waktu ke waktu" },
-];
+/* Evaluasi perusahaan — komponen penilaian milik industri (owner_type=industri).
+ * Skala 1-4 dikonversi ke 0-100 dengan benar: score = nilai * 25.
+ */
 
 const SKALA = [
   { nilai: 4, label: "Sangat Baik" },
@@ -19,8 +12,11 @@ const SKALA = [
   { nilai: 1, label: "Perlu Ditingkatkan" },
 ];
 
+const toScore100 = (skala14) => Number(skala14) * 25;
+
 function EvaluasiPerusahaan({ onMeta }) {
   const [rows, setRows] = useState([]);
+  const [aspek, setAspek] = useState([]); // komponen industri aktif dari backend
   const [loading, setLoading] = useState(true);
   const [placementId, setPlacementId] = useState("");
   const [scores, setScores] = useState({});
@@ -30,8 +26,22 @@ function EvaluasiPerusahaan({ onMeta }) {
 
   const load = async () => {
     try {
-      const r = await placementsApi.index();
+      const [r, cRes] = await Promise.all([
+        placementsApi.index(),
+        componentsApi.index().catch(() => ({ data: [] })),
+      ]);
       setRows((Array.isArray(r) ? r : r?.data || []).filter((p) => p.status === "active" || p.status === "completed"));
+      // Hanya komponen milik industri yang boleh dinilai perusahaan.
+      const active = (cRes?.data ?? []).filter(
+        (c) => c.is_active !== false && (!c.owner_type || c.owner_type === "industri")
+      );
+      setAspek(active.map((c) => ({
+        id: c.id,
+        key: c.id,
+        label: c.name,
+        desc: c.description || "",
+        weight: c.weight,
+      })));
     } finally {
       setLoading(false);
     }
@@ -47,18 +57,18 @@ function EvaluasiPerusahaan({ onMeta }) {
   const submit = async (e) => {
     e.preventDefault();
     if (!placementId) { setMsg({ t: "Pilih siswa dulu.", ok: false }); return; }
-    const kosong = ASPEK.filter((a) => !scores[a.key]);
+    const kosong = aspek.filter((a) => !scores[a.key]);
     if (kosong.length) { setMsg({ t: `Masih ada ${kosong.length} aspek belum dinilai.`, ok: false }); return; }
     setSaving(true);
     setMsg({ t: "", ok: true });
     try {
-      for (const a of ASPEK) {
+      for (const [i, a] of aspek.entries()) {
         await assessmentsApi.store({
-          placement_id: placementId,
-          aspect: a.key,
-          score: scores[a.key],
-          note: a.key === ASPEK[0].key ? note : "",
-          assessor_role: "company",
+          placement_id: Number(placementId),
+          component_id: a.id,
+          // Konversi skala 1-4 → 0-100 (1→25, 2→50, 3→75, 4→100).
+          score: toScore100(scores[a.key]),
+          note: i === 0 ? (note.trim() || undefined) : undefined,
         });
       }
       setMsg({ t: "Evaluasi tersimpan.", ok: true });
@@ -77,9 +87,12 @@ function EvaluasiPerusahaan({ onMeta }) {
       <div className="zip-card" style={{ maxWidth: "none", marginBottom: 18 }}>
         <h3 className="zip-card-title" style={{ marginTop: 0 }}>Evaluasi Siswa PKL</h3>
         <p className="zip-sub" style={{ marginBottom: 16 }}>
-          Nilai setiap aspek dengan skala 1-4. Sistem mengkonversi otomatis ke 0-100 sebagai referensi guru.
+          Nilai setiap aspek dengan skala 1-4. Sistem mengkonversi otomatis ke 0-100 (1→25, 2→50, 3→75, 4→100).
         </p>
         {msg.t && <div className={msg.ok ? "zip-success" : "zip-error"}>{msg.t}</div>}
+        {!loading && aspek.length === 0 && (
+          <div className="zip-warn">Belum ada komponen penilaian industri yang aktif. Hubungi admin.</div>
+        )}
         <form onSubmit={submit}>
           <label className="zip-field" style={{ marginBottom: 20 }}>
             <span>Siswa</span>
@@ -101,7 +114,7 @@ function EvaluasiPerusahaan({ onMeta }) {
             </select>
           </label>
 
-          {ASPEK.map((a) => (
+          {aspek.map((a) => (
             <div key={a.key} style={{ marginBottom: 18, paddingBottom: 18, borderBottom: "1px solid #f1f5f9" }}>
               <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{a.label}</div>
               <div className="zip-sub" style={{ marginBottom: 10 }}>{a.desc}</div>
@@ -138,7 +151,7 @@ function EvaluasiPerusahaan({ onMeta }) {
               placeholder="Tuliskan kelebihan siswa dan hal yang perlu ditingkatkan…" />
           </label>
           <div className="zip-form-actions">
-            <button type="submit" className="zip-btn-primary" disabled={saving}>
+            <button type="submit" className="zip-btn-primary" disabled={saving || aspek.length === 0}>
               {saving ? "Menyimpan…" : "Simpan Evaluasi"}
             </button>
           </div>

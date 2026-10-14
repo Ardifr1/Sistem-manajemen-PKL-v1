@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
-import { assessmentsApi } from "../../api/index.js";
+import { assessmentsApi, componentsApi, finalsApi } from "../../api/index.js";
 import { getEnrichedPlacements } from "../../lib/role-data.js";
 import { SkelCards } from "../../components/role/skeleton.jsx";
 import "./guru-pages.css";
 
-const ASPEK = [
+/**
+ * Komponen penilaian diambil dari backend (assessment_components) — guru
+ * menilai tiap komponen aktif dengan component_id, bukan aspek hard-coded.
+ */
+const ASPEK_FALLBACK = [
   { key: "kedisiplinan", label: "Kedisiplinan" },
   { key: "kompetensi", label: "Kompetensi" },
   { key: "sikap", label: "Sikap" },
@@ -29,9 +33,12 @@ function avatarColor(name) {
  */
 function Penilaian({ onMeta }) {
   const [placements, setPlacements] = useState([]);
-  const [scores, setScores] = useState({}); // { placementId: { kedisiplinan, kompetensi, sikap } }
+  const [aspek, setAspek] = useState(ASPEK_FALLBACK); //ASPEK: komponen guru aktif {id, name}
+  const [scores, setScores] = useState({}); // { placementId: { [componentId]: score } }
+  const [finals, setFinals] = useState({}); // { placementId: finalAssessment }
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [calculating, setCalculating] = useState(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -39,21 +46,35 @@ function Penilaian({ onMeta }) {
     onMeta?.({ title: "Penilaian", subtitle: "Penilaian detail siswa bimbingan • Periode PKL 2026" });
     (async () => {
       try {
-        const [pRes, aRes] = await Promise.all([
+        const [pRes, aRes, cRes, fRes] = await Promise.all([
           getEnrichedPlacements(),
           assessmentsApi.index().catch(() => ({ data: [] })),
+          componentsApi.index().catch(() => ({ data: [] })),
+          finalsApi.index().catch(() => ({ data: [] })),
         ]);
         setPlacements(pRes || []);
-        // muat nilai yang sudah ada
+        // Guru hanya mengisi komponen milik guru; fallback statis bila kosong.
+        const guruComponents = (cRes?.data ?? []).filter(
+          (c) => c.is_active !== false && (!c.owner_type || c.owner_type === "guru")
+        );
+        if (guruComponents.length > 0) {
+          setAspek(guruComponents.map((c) => ({ id: c.id, key: c.name, label: c.name, weight: c.weight })));
+        }
+        const activeComponents = guruComponents.length > 0 ? guruComponents : [];
+        const finalsByPlacement = {};
+        for (const f of (fRes?.data ?? [])) {
+          finalsByPlacement[f.placement_id] = f;
+        }
+        setFinals(finalsByPlacement);
+        // muat nilai yang sudah ada (per penilai + komponen)
         const existing = {};
         for (const a of (aRes?.data ?? [])) {
-          if (a.assessor_role !== "teacher") continue;
           const pid = a.placement_id;
+          const cid = a.component_id ?? (activeComponents.find((c) => a.component_name && c.name.toLowerCase() === String(a.component_name).toLowerCase())?.id)
+            ?? (ASPEK_FALLBACK.find((x) => a.component_name?.toLowerCase().includes(x.key))?.id ?? null);
+          if (!cid) continue;
           if (!existing[pid]) existing[pid] = {};
-          // map component/aspect name ke key
-          const key = ASPEK.find((x) => a.component_name?.toLowerCase().includes(x.key))?.key
-            || a.aspect?.toLowerCase();
-          if (key && ASPEK.some((x) => x.key === key)) existing[pid][key] = a.score;
+          existing[pid][cid] = a.score;
         }
         setScores(existing);
       } finally {
@@ -62,14 +83,14 @@ function Penilaian({ onMeta }) {
     })();
   }, [onMeta]);
 
-  const setScore = (pid, key, val) => {
+  const setScore = (pid, cid, val) => {
     const num = val === "" ? "" : Math.max(0, Math.min(100, Number(val) || 0));
-    setScores((s) => ({ ...s, [pid]: { ...(s[pid] || {}), [key]: num } }));
+    setScores((s) => ({ ...s, [pid]: { ...(s[pid] || {}), [cid]: num } }));
   };
 
   const rataRata = (pid) => {
     const sc = scores[pid] || {};
-    const vals = ASPEK.map((a) => sc[a.key]).filter((v) => v !== "" && v != null && !isNaN(v));
+    const vals = aspek.map((a) => sc[a.id]).filter((v) => v !== "" && v != null && !isNaN(v));
     if (!vals.length) return "-";
     return Math.round(vals.reduce((a, b) => a + Number(b), 0) / vals.length);
   };
@@ -80,25 +101,59 @@ function Penilaian({ onMeta }) {
     setSuccess("");
     setSaving(true);
     try {
-      for (const p of placements) {
-        const sc = scores[p.id] || {};
-        for (const a of ASPEK) {
-          const val = sc[a.key];
-          if (val === "" || val == null) continue;
-          await assessmentsApi.store({
-            placement_id: p.id,
-            assessor_role: "teacher",
-            aspect: a.key,
-            component_name: a.label,
-            score: Number(val),
-          }).catch(() => {});
+      const cleaned = placements.map((p) => ({ p, vals: aspek
+        .map((a) => ({ a, val: scores[p.id]?.[a.id] }))
+        .filter((x) => x.val !== "" && x.val != null && !isNaN(x.val)) }));
+      if (!cleaned.some((c) => c.vals.length > 0)) {
+        setError("Isi minimal satu nilai sebelum menyimpan.");
+        setSaving(false);
+        return;
+      }
+      const failures = [];
+      for (const { p, vals } of cleaned) {
+        for (const { a, val } of vals) {
+          try {
+            await assessmentsApi.store({
+              placement_id: p.id,
+              component_id: a.id,
+              score: Number(val),
+            }).then((res) => {
+              if (res?.message && /sudah/i.test(res.message) && res?.status >= 400) {
+                failures.push(`${p.student?.name} — ${a.label}: ${res.message}`);
+              }
+            }).catch((err) => {
+              // Tampilkan error backend apa adanya (mis. 422 sudah dinilai, 403 tidak berwenang)
+              failures.push(`${p.student?.name} — ${a.label}: ${err?.message || "gagal"}`);
+            });
+          } catch (err) {
+            failures.push(`${p.student?.name} — ${a.label}: ${err?.message || "gagal"}`);
+          }
         }
       }
-      setSuccess("Penilaian tersimpan sebagai draf.");
+      if (failures.length > 0) {
+        setError(`Sebagian penilaian gagal disimpan (${failures.length}). ${failures.slice(0, 3).join(" | ")}`);
+      } else {
+        setSuccess("Penilaian tersimpan.");
+      }
     } catch (err) {
       setError(err?.message || "Gagal menyimpan penilaian.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const hitungNilaiAkhir = async (placementId) => {
+    setError("");
+    setSuccess("");
+    setCalculating(placementId);
+    try {
+      const res = await finalsApi.store({ placement_id: Number(placementId) });
+      setFinals((f) => ({ ...f, [placementId]: res?.data }));
+      setSuccess(`Nilai akhir dihitung sistem: ${res?.data?.final_score ?? "-"}.`);
+    } catch (err) {
+      setError(err?.message || "Gagal menghitung nilai akhir.");
+    } finally {
+      setCalculating(null);
     }
   };
 
@@ -131,13 +186,14 @@ function Penilaian({ onMeta }) {
         ) : (
           <div className="zip-table-wrap" style={{ boxShadow: "none", marginTop: 12 }}>
             <table className="zip-table">
-              <thead>
+                <thead>
                 <tr>
                   <th>Siswa</th>
-                  {ASPEK.map((a) => (
-                    <th key={a.key} style={{ textAlign: "center" }}>{a.label}</th>
+              {aspek.map((a) => (
+                    <th key={a.id ?? a.key} style={{ textAlign: "center" }}>{a.label}</th>
                   ))}
                   <th style={{ textAlign: "center" }}>Rata-rata</th>
+                  <th style={{ textAlign: "center" }}>Nilai Akhir</th>
                 </tr>
               </thead>
               <tbody>
@@ -154,21 +210,38 @@ function Penilaian({ onMeta }) {
                         </span>
                       </span>
                     </td>
-                    {ASPEK.map((a) => (
-                      <td key={a.key} style={{ textAlign: "center" }}>
+                    {aspek.map((a) => (
+                      <td key={a.id ?? a.key} style={{ textAlign: "center" }}>
                         <input
                           type="number"
                           min="0"
                           max="100"
                           className="zip-score-input"
-                          value={scores[p.id]?.[a.key] ?? ""}
-                          onChange={(e) => setScore(p.id, a.key, e.target.value)}
+                          value={scores[p.id]?.[a.id] ?? ""}
+                          onChange={(e) => setScore(p.id, a.id, e.target.value)}
                           placeholder="0"
                         />
                       </td>
                     ))}
                     <td style={{ textAlign: "center", fontWeight: 800, fontSize: 15 }}>
                       {rataRata(p.id)}
+                    </td>
+                    <td style={{ textAlign: "center", fontSize: 13 }}>
+                      {finals[p.id] ? (
+                        <span>
+                          <b>{finals[p.id].final_score}</b>{" "}
+                          <span className="zip-badge b-gray">{finals[p.id].status}</span>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="zip-btn-outline"
+                          disabled={calculating === p.id}
+                          onClick={() => hitungNilaiAkhir(p.id)}
+                        >
+                          {calculating === p.id ? "Menghitung…" : "Hitung"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -194,27 +267,42 @@ function Penilaian({ onMeta }) {
                 </div>
               </div>
               <div className="nilai-inputs">
-                {ASPEK.map((a) => (
-                  <label key={a.key} className="nilai-field">
+                {aspek.map((a) => (
+                  <label key={a.id ?? a.key} className="nilai-field">
                     <span>{a.label}</span>
                     <input
                       type="number"
                       min="0"
                       max="100"
                       className="zip-score-input"
-                      value={scores[p.id]?.[a.key] ?? ""}
-                      onChange={(e) => setScore(p.id, a.key, e.target.value)}
+                      value={scores[p.id]?.[a.id] ?? ""}
+                      onChange={(e) => setScore(p.id, a.id, e.target.value)}
                       placeholder="0"
                     />
                   </label>
                 ))}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+                <span className="zip-sub">
+                  Nilai akhir: {finals[p.id] ? `${finals[p.id].final_score} (${finals[p.id].status})` : "belum dihitung"}
+                </span>
+                {!finals[p.id] && (
+                  <button
+                    type="button"
+                    className="zip-btn-outline"
+                    disabled={calculating === p.id}
+                    onClick={() => hitungNilaiAkhir(p.id)}
+                  >
+                    {calculating === p.id ? "Menghitung…" : "Hitung Nilai Akhir"}
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </div>
 
         <div className="nilai-actions">
-          <span className="zip-sub">Rata-rata dihitung otomatis dari 3 komponen.</span>
+          <span className="zip-sub">Rata-rata dihitung otomatis dari komponen aktif.</span>
           <button type="submit" className="zip-btn-primary" disabled={saving || loading}>
             <i className="fa-solid fa-floppy-disk"></i> {saving ? "Menyimpan…" : "Simpan Penilaian"}
           </button>

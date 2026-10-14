@@ -127,26 +127,65 @@ trait ManagesPklTestData
         ]);
     }
 
-    protected function createComponent(): AssessmentComponent
+    protected function createComponent(string $ownerType = 'industri', float $weight = 100): AssessmentComponent
     {
         return AssessmentComponent::create([
-            'name' => 'Kedisiplinan',
-            'weight' => 40,
+            'name' => 'Komponen '.ucfirst($ownerType).' '.uniqid(),
+            'owner_type' => $ownerType,
+            'weight' => $weight,
             'is_active' => true,
         ]);
+    }
+
+    /**
+     * Perangkat komponen valid: total bobot aktif tepat 100
+     * (70 industri + 30 guru).
+     *
+     * @return array{industri: AssessmentComponent, guru: AssessmentComponent}
+     */
+    protected function createDefaultComponents(): array
+    {
+        $industri = AssessmentComponent::create([
+            'name' => 'Industri '.uniqid(),
+            'owner_type' => 'industri',
+            'weight' => 70,
+            'is_active' => true,
+        ]);
+
+        $guru = AssessmentComponent::create([
+            'name' => 'Guru '.uniqid(),
+            'owner_type' => 'guru',
+            'weight' => 30,
+            'is_active' => true,
+        ]);
+
+        return ['industri' => $industri, 'guru' => $guru];
+    }
+
+    /**
+     * Nilai lengkap satu placement: industri 80, guru 90 →
+     * final = 80*0.7 + 90*0.3 = 83.
+     */
+    protected function scorePlacementFully(PklPlacement $placement, User $industryAssessor, User $teacherAssessor): void
+    {
+        $components = $this->createDefaultComponents();
+
+        $this->createAssessment($placement, $components['industri'], $industryAssessor, 80);
+        $this->createAssessment($placement, $components['guru'], $teacherAssessor, 90);
     }
 
     protected function createAssessment(
         PklPlacement $placement,
         AssessmentComponent $component,
-        User $assessor
+        User $assessor,
+        float $score = 85
     ): Assessment {
         return Assessment::create([
             'placement_id' => $placement->id,
             'component_id' => $component->id,
             'assessed_by' => $assessor->id,
             'assessor_role' => $assessor->role,
-            'score' => 85,
+            'score' => $score,
             'note' => null,
         ]);
     }
@@ -173,12 +212,12 @@ trait ManagesPklTestData
         ]);
     }
 
-    protected function createFinalAssessment(PklPlacement $placement, User $finalizer): FinalAssessment
+    protected function createFinalAssessment(PklPlacement $placement, User $finalizer, string $status = 'draft'): FinalAssessment
     {
         return FinalAssessment::create([
             'placement_id' => $placement->id,
             'final_score' => 88,
-            'status' => 'draft',
+            'status' => $status,
             'finalized_by' => $finalizer->id,
             'finalized_at' => now(),
         ]);

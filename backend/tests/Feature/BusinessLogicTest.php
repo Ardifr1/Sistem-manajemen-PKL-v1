@@ -316,20 +316,41 @@ class BusinessLogicTest extends TestCase
         $this->deleteJson("/api/companies/{$company->id}")->assertForbidden();
     }
 
-    public function test_company_supervisor_assignment_is_admin_only(): void
+    public function test_company_supervisor_assignment_scoping(): void
     {
+        // Aturan aktif (sesuai UI perusahaan, PembimbingKelola): perusahaan
+        // membuat akun pembimbing untuk perusahaannya sendiri; role supervisor
+        // tidak boleh membuat; admin bisa untuk perusahaan mana pun.
         $companyUser = $this->createUser('company', 'company_a');
         $company = $this->createCompany();
         $this->attachCompanySupervisor($companyUser, $company);
+        $otherCompany = $this->createCompany('PT Lain');
 
         Sanctum::actingAs($companyUser);
 
+        // Perusahaan boleh membuat pembimbing untuk perusahaannya sendiri.
         $this->postJson('/api/company-supervisors', [
-            'user_id' => $companyUser->id,
-            'company_id' => $company->id,
-        ])->assertForbidden();
+            'name' => 'Pembimbing Baru',
+            'email' => 'pembimbing-baru@pt.test',
+            'password' => 'rahasia123',
+            'password_confirmation' => 'rahasia123',
+        ])->assertCreated();
 
-        $this->getJson('/api/company-supervisors')->assertForbidden();
+        // List dibatasi company-nya sendiri.
+        $this->getJson('/api/company-supervisors')->assertOk();
+
+        // Role supervisor tidak boleh membuat akun pembimbing.
+        $supervisorUser = $this->createUser('supervisor', 'supervisor_a');
+        $this->attachCompanySupervisor($supervisorUser, $otherCompany);
+
+        Sanctum::actingAs($supervisorUser);
+
+        $this->postJson('/api/company-supervisors', [
+            'name' => 'Pembimbing Lain',
+            'email' => 'pembimbing-lain@pt.test',
+            'password' => 'rahasia123',
+            'password_confirmation' => 'rahasia123',
+        ])->assertForbidden();
     }
 
     // ===================== JOURNAL RECOMMENDATION =====================

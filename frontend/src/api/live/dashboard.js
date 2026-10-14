@@ -94,6 +94,7 @@ export async function adminMonitoringStages() {
     get(ep.applications.index).catch(() => []),
     get(ep.placements.index).catch(() => []),
     get(ep.journals.index).catch(() => []),
+    get(ep.finalAssessments.index).catch(() => []),
   ]);
   const stage = (label, value) => {
     const n = Number(value) || 0;

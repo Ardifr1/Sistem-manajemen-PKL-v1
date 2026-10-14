@@ -29,7 +29,12 @@ function EvaluasiIndustri({ onMeta }) {
         }
         setPlacements(rows.filter((p) => p.status === "active" || p.status === "completed"));
         const cRes = await componentsApi.index().catch(() => ({ data: [] }));
-        setComponents((cRes?.data ?? []).filter((c) => c.is_active !== false));
+        // Pembimbing industri hanya mengisi komponen milik industri.
+        setComponents(
+          (cRes?.data ?? []).filter(
+            (c) => c.is_active !== false && (!c.owner_type || c.owner_type === "industri")
+          )
+        );
       } finally {
         setLoading(false);
       }

@@ -12,7 +12,10 @@ class AssessmentPolicy
 
     public function viewAny(User $user): bool
     {
-        return in_array($user->role, ['admin', 'teacher', 'student'], true);
+        // Company dan supervisor (Pembimbing Industri) butuh list penilaian
+        // untuk memverifikasi inputnya; index tetap di-scope per placement
+        // yang boleh dilihat (lihat AssessmentController::index).
+        return in_array($user->role, ['admin', 'teacher', 'student', 'company', 'supervisor'], true);
     }
 
     public function view(User $user, Assessment $assessment): bool
@@ -31,12 +34,27 @@ class AssessmentPolicy
                 && $this->isAuthorizedForCompany($user, $assessment->placement->company_id);
         }
 
+        if ($user->role === 'supervisor') {
+            $supervisor = $user->companySupervisor;
+            $placement = $assessment->placement;
+
+            if (! $supervisor || ! $placement) {
+                return false;
+            }
+
+            if ($placement->supervisor_id !== null) {
+                return (int) $placement->supervisor_id === (int) $supervisor->id;
+            }
+
+            return (int) $placement->company_id === (int) $supervisor->company_id;
+        }
+
         return false;
     }
 
     public function create(User $user): bool
     {
-        return in_array($user->role, ['teacher', 'company'], true);
+        return in_array($user->role, ['teacher', 'company', 'supervisor'], true);
     }
 
     public function update(User $user, Assessment $assessment): bool
@@ -46,7 +64,7 @@ class AssessmentPolicy
         }
 
         // Hanya penilai aslinya yang boleh mengubah penilaian.
-        if (in_array($user->role, ['teacher', 'company'], true)) {
+        if (in_array($user->role, ['teacher', 'company', 'supervisor'], true)) {
             return $assessment->assessed_by === $user->id;
         }
 
@@ -59,7 +77,7 @@ class AssessmentPolicy
             return true;
         }
 
-        if (in_array($user->role, ['teacher', 'company'], true)) {
+        if (in_array($user->role, ['teacher', 'company', 'supervisor'], true)) {
             return $assessment->assessed_by === $user->id;
         }
 

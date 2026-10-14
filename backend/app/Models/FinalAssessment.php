@@ -13,6 +13,9 @@ class FinalAssessment extends Model
         'status',
         'finalized_by',
         'finalized_at',
+        'published_by',
+        'published_at',
+        'unpublish_reason',
     ];
 
     protected function casts(): array
@@ -20,6 +23,7 @@ class FinalAssessment extends Model
         return [
             'final_score' => 'decimal:2',
             'finalized_at' => 'datetime',
+            'published_at' => 'datetime',
         ];
     }
 
@@ -31,5 +35,10 @@ class FinalAssessment extends Model
     public function finalizer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'finalized_by');
+    }
+
+    public function publisher(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'published_by');
     }
 }

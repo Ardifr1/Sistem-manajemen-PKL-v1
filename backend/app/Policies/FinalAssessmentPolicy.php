@@ -21,8 +21,10 @@ class FinalAssessmentPolicy
             return true;
         }
 
+        // Siswa hanya boleh melihat nilai akhir miliknya yang sudah dipublikasikan.
         if ($user->role === 'student') {
-            return $finalAssessment->placement
+            return $finalAssessment->status === 'published'
+                && $finalAssessment->placement
                 && $finalAssessment->placement->student_id === $user->id;
         }
 
@@ -47,5 +49,18 @@ class FinalAssessmentPolicy
     public function delete(User $user, FinalAssessment $finalAssessment): bool
     {
         return in_array($user->role, ['teacher', 'admin'], true);
+    }
+
+    /**
+     * Publikasi dan pembatalan publikasi hanya boleh dilakukan Admin.
+     */
+    public function publish(User $user): bool
+    {
+        return $user->role === 'admin';
+    }
+
+    public function unpublish(User $user): bool
+    {
+        return $user->role === 'admin';
     }
 }

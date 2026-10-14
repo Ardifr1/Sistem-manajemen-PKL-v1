@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class PklPlacement extends Model
 {
@@ -55,5 +56,10 @@ class PklPlacement extends Model
     public function application(): BelongsTo
     {
         return $this->belongsTo(PklApplication::class, 'application_id');
+    }
+
+    public function finalAssessment(): HasOne
+    {
+        return $this->hasOne(FinalAssessment::class, 'placement_id');
     }
 }

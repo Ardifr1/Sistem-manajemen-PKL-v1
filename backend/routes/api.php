@@ -14,13 +14,14 @@ use App\Http\Controllers\Student\ApplicationDocumentController;
 use App\Http\Controllers\Student\AttendanceController;
 use App\Http\Controllers\Student\JournalController;
 use App\Http\Controllers\Student\JournalRecommendationController;
+use App\Http\Controllers\Student\ProgressRecordController;
 use App\Http\Controllers\Student\FeedbackController;
 use App\Http\Controllers\Student\PklApplicationController;
-use App\Http\Controllers\Student\ProgressRecordController;
 use App\Http\Controllers\Student\StudentProfileController;
 use App\Http\Controllers\Teacher\FinalAssessmentController;
 use App\Http\Controllers\Teacher\TeacherProfileController;
 use App\Http\Controllers\AssessmentController;
+use App\Http\Controllers\AuditLogController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -54,8 +55,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/journals/{journal}/submit', [JournalController::class, 'submit']);
     Route::post('/journals/{journal}/verify', [JournalController::class, 'verify']);
 
+    Route::apiResource(
+        'journal-recommendations',
+        JournalRecommendationController::class
+    );
+
     // Attendance
     Route::apiResource('attendances', AttendanceController::class);
+
+    // Progress
+    Route::apiResource('progress-records', ProgressRecordController::class);
 
     // Feedback (PRD seksi 27, BR-19)
     Route::apiResource('feedbacks', FeedbackController::class);
@@ -68,6 +77,11 @@ Route::middleware('auth:sanctum')->group(function () {
     );
 
     Route::apiResource('assessments', AssessmentController::class);
+    Route::apiResource('final-assessments', FinalAssessmentController::class);
+    Route::post('/final-assessments/{finalAssessment}/publish', [FinalAssessmentController::class, 'publish']);
+    Route::post('/final-assessments/{finalAssessment}/unpublish', [FinalAssessmentController::class, 'unpublish']);
+    Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show']);
+
     // Profile
     Route::apiResource('student-profiles', StudentProfileController::class);
     // User

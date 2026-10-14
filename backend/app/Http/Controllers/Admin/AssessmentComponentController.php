@@ -51,6 +51,11 @@ class AssessmentComponentController extends Controller
                 'nullable',
                 'string',
             ],
+            'owner_type' => [
+                'sometimes',
+                'string',
+                'in:industri,guru',
+            ],
             'weight' => [
                 'required',
                 'numeric',
@@ -64,9 +69,20 @@ class AssessmentComponentController extends Controller
 
         $component = AssessmentComponent::create($validated);
 
+        $weightError = $this->validateTotalWeight();
+
+        if ($weightError !== null) {
+            // Perubahan dibatalkan agar total bobot tidak rusak.
+            $component->delete();
+
+            return response()->json([
+                'message' => $weightError,
+            ], 422);
+        }
+
         return response()->json([
             'message' => 'Komponen penilaian berhasil ditambahkan.',
-            'data' => $component,
+            'data' => $component->fresh(),
         ], 201);
     }
 
@@ -89,6 +105,11 @@ class AssessmentComponentController extends Controller
                 'nullable',
                 'string',
             ],
+            'owner_type' => [
+                'sometimes',
+                'string',
+                'in:industri,guru',
+            ],
             'weight' => [
                 'sometimes',
                 'numeric',
@@ -101,7 +122,20 @@ class AssessmentComponentController extends Controller
             ],
         ]);
 
+        $original = $assessmentComponent->getAttributes();
+
         $assessmentComponent->update($validated);
+
+        $weightError = $this->validateTotalWeight();
+
+        if ($weightError !== null) {
+            $assessmentComponent->fill($original);
+            $assessmentComponent->save();
+
+            return response()->json([
+                'message' => $weightError,
+            ], 422);
+        }
 
         return response()->json([
             'message' => 'Komponen penilaian berhasil diperbarui.',
@@ -119,5 +153,31 @@ class AssessmentComponentController extends Controller
         return response()->json([
             'message' => 'Komponen penilaian berhasil dihapus.',
         ]);
+    }
+
+    /**
+     * Total bobot komponen AKTIF yang dipakai perhitungan harus tepat 100%.
+     * Pengecualian: boleh belum 100 selama belum ada komponen aktif sama
+     * sekali? Tidak — aturan bisnis tegas: total aktif harus 100. Namun saat
+     * admin sedang menyusun bertahap, izinkan state transien 0 komponen
+     * aktif atau total <= 100; tolak total > 100 dan tolak finalisasi
+     * perhitungan bila bukan tepat 100 (dicek di FinalScoreService).
+     */
+    private function validateTotalWeight(): ?string
+    {
+        $total = (float) AssessmentComponent::query()
+            ->where('is_active', true)
+            ->sum('weight');
+
+        if ($total - 100.0 > 0.01) {
+            return 'Total bobot komponen aktif melebihi 100%. Saat ini '.$this->formatWeight($total).'%.';
+        }
+
+        return null;
+    }
+
+    private function formatWeight(float $weight): string
+    {
+        return rtrim(rtrim(number_format($weight, 2, '.', ''), '0'), '.');
     }
 }
