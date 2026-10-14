@@ -3,7 +3,7 @@ import { assessmentsApi, componentsApi } from "../../api/index.js";
 import { SkelCards } from "../../components/role/skeleton.jsx";
 import {
   getEnrichedPlacements,
-  getMyCompanyId,
+  getMySupervisorId,
 } from "../../lib/role-data.js";
 
 function EvaluasiIndustri({ onMeta }) {
@@ -13,6 +13,8 @@ function EvaluasiIndustri({ onMeta }) {
 
   const [placementId, setPlacementId] = useState("");
   const [values, setValues] = useState({});
+  const [savedIds, setSavedIds] = useState({});
+  const [savedValues, setSavedValues] = useState({});
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -22,19 +24,31 @@ function EvaluasiIndustri({ onMeta }) {
     onMeta?.({ title: "Evaluasi Siswa", subtitle: "Disiplin • sikap • kompetensi • feedback" });
     (async () => {
       try {
-        const companyId = await getMyCompanyId();
+        const supervisorId = await getMySupervisorId();
         let rows = await getEnrichedPlacements();
-        if (companyId) {
-          rows = rows.filter((p) => String(p.company_id) === String(companyId));
+        if (supervisorId) {
+          // BR-09a: hanya siswa yang ditugaskan ke pembimbing ini
+          rows = rows.filter((p) => String(p.supervisor_id) === String(supervisorId));
         }
         setPlacements(rows.filter((p) => p.status === "active" || p.status === "completed"));
         const cRes = await componentsApi.index().catch(() => ({ data: [] }));
-        // Pembimbing industri hanya mengisi komponen milik industri.
         setComponents(
           (cRes?.data ?? []).filter(
-            (c) => c.is_active !== false && (!c.owner_type || c.owner_type === "industri")
+            (c) => c.is_active !== false
+              && (!c.owner_type || c.owner_type === "industri")
+              && (!c.assessor_role || c.assessor_role === "supervisor")
           )
         );
+        const aRes = await assessmentsApi.index().catch(() => ({ data: [] }));
+        const ids = {};
+        const vals = {};
+        for (const a of (aRes?.data ?? [])) {
+          if (a.assessor_role !== "supervisor") continue;
+          ids[`${a.placement_id}:${a.component_id}`] = a.id;
+          vals[`${a.placement_id}:${a.component_id}`] = Math.round(Number(a.score) / 20);
+        }
+        setSavedIds(ids);
+        setSavedValues(vals);
       } finally {
         setLoading(false);
       }
@@ -59,16 +73,23 @@ function EvaluasiIndustri({ onMeta }) {
     setSaving(true);
     try {
       for (const { component, value } of entries) {
-        await assessmentsApi.store({
+        const key = `${placementId}:${component.id}`;
+        const payload = {
           placement_id: Number(placementId),
           component_id: component.id,
           score: value * 20,
           note: note.trim() || null,
-        });
+        };
+        if (savedIds[key]) {
+          await assessmentsApi.update(savedIds[key], { score: payload.score, note: payload.note });
+        } else {
+          await assessmentsApi.store(payload);
+        }
       }
       setSent(true);
       setValues({});
       setNote("");
+      setPlacementId("");
     } catch (err) {
       setError(err?.message || "Gagal mengirim evaluasi.");
     } finally {
@@ -93,7 +114,18 @@ function EvaluasiIndustri({ onMeta }) {
         {error && <div className="zip-error">{error}</div>}
         <label className="zip-field">
           <span>Siswa yang dinilai</span>
-          <select value={placementId} onChange={(e) => setPlacementId(e.target.value)}>
+          <select value={placementId} onChange={(e) => {
+              const id = e.target.value;
+              setPlacementId(id);
+              setSent(false);
+              setError("");
+              const pre = {};
+              for (const c of components) {
+                const v = savedValues[`${id}:${c.id}`];
+                if (v) pre[c.id] = v;
+              }
+              setValues(pre);
+            }}>
             <option value="">— Pilih siswa —</option>
             {placements.map((p) => (
               <option key={p.id} value={p.id}>

@@ -12,9 +12,8 @@ class AssessmentPolicy
 
     public function viewAny(User $user): bool
     {
-        // Company dan supervisor (Pembimbing Industri) butuh list penilaian
-        // untuk memverifikasi inputnya; index tetap di-scope per placement
-        // yang boleh dilihat (lihat AssessmentController::index).
+        // Company and supervisors may review results; index is scoped to
+        // placements they are allowed to access.
         return in_array($user->role, ['admin', 'teacher', 'student', 'company', 'supervisor'], true);
     }
 
@@ -54,7 +53,7 @@ class AssessmentPolicy
 
     public function create(User $user): bool
     {
-        return in_array($user->role, ['teacher', 'company', 'supervisor'], true);
+        return in_array($user->role, ['teacher', 'supervisor'], true);
     }
 
     public function update(User $user, Assessment $assessment): bool
@@ -64,7 +63,7 @@ class AssessmentPolicy
         }
 
         // Hanya penilai aslinya yang boleh mengubah penilaian.
-        if (in_array($user->role, ['teacher', 'company', 'supervisor'], true)) {
+        if (in_array($user->role, ['teacher', 'supervisor'], true)) {
             return $assessment->assessed_by === $user->id;
         }
 
@@ -77,7 +76,7 @@ class AssessmentPolicy
             return true;
         }
 
-        if (in_array($user->role, ['teacher', 'company', 'supervisor'], true)) {
+        if (in_array($user->role, ['teacher', 'supervisor'], true)) {
             return $assessment->assessed_by === $user->id;
         }
 

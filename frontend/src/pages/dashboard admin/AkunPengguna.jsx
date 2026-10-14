@@ -444,15 +444,19 @@ function Pengguna({ onMeta }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState({ name: "list" }); // list | tambah | edit | hapus
   const [error, setError] = useState("");
+  const [resetReqs, setResetReqs] = useState([]);
 
   const load = () => {
     setLoading(true);
-    usersApi
-      .index()
-      .then((res) => {
+    Promise.all([
+      usersApi.index().catch((err) => { throw err; }),
+      usersApi.resetRequests().catch(() => ({ data: [] })),
+    ])
+      .then(([res, rr]) => {
         const all = Array.isArray(res.data) ? res.data : [];
         // akun pembimbing industri dikelola perusahaan, jangan tampil di sini
         setRows(all.filter((u) => u.role !== "supervisor"));
+        setResetReqs(Array.isArray(rr.data) ? rr.data : []);
       })
       .catch((err) => setError(err?.message || "Gagal memuat pengguna."))
       .finally(() => setLoading(false));
@@ -502,9 +506,15 @@ function Pengguna({ onMeta }) {
   }
 
   if (view.name === "edit") {
+    const handleSaved = async () => {
+      if (view.resetRequestId) {
+        try { await usersApi.resolveResetRequest(view.resetRequestId); } catch { /* abaikan */ }
+      }
+      backToList();
+    };
     return (
       <div className="zip-page">
-        <UserForm initial={view.row} onCancel={backToList} onSaved={backToList} onMeta={onMeta} />
+        <UserForm initial={view.row} onCancel={backToList} onSaved={handleSaved} onMeta={onMeta} />
       </div>
     );
   }
@@ -533,6 +543,27 @@ function Pengguna({ onMeta }) {
         </button>
       </div>
       {error && <div className="zip-error">{error}</div>}
+      {!loading && resetReqs.length > 0 && (
+        <div className="zip-note" style={{ marginBottom: 14 }}>
+          <strong><i className="fa-solid fa-key"></i> {resetReqs.length} permintaan reset password</strong>
+          {resetReqs.map((r) => (
+            <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 8 }}>
+              <span style={{ fontSize: 13 }}>{r.user?.name} <span className="zip-muted">({r.user?.username})</span></span>
+              <button
+                type="button"
+                className="zip-btn-primary"
+                style={{ padding: "8px 16px", fontSize: 12 }}
+                onClick={() => {
+                  const u = rows.find((x) => x.id === r.user_id);
+                  if (u) { setView({ name: "edit", row: u, resetRequestId: r.id }); onMeta?.({ title: "Reset Password", subtitle: u.name }); }
+                }}
+              >
+                Atur Password Baru
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {loading ? (
         <SkelCards n={4} />
       ) : (

@@ -37,6 +37,7 @@ function activeKey(pathname) {
   if (pathname.startsWith("/perusahaan/profil")) return "profil";
   if (pathname.startsWith("/perusahaan/pengajuan")) return "pengajuan";
   if (pathname.startsWith("/perusahaan/interview")) return "interview";
+  if (pathname.startsWith("/perusahaan/siswa")) return "siswa";
   if (pathname.startsWith("/perusahaan/pembimbing")) return "pembimbing";
   if (pathname.startsWith("/perusahaan/evaluasi")) return "evaluasi";
   return "dashboard";

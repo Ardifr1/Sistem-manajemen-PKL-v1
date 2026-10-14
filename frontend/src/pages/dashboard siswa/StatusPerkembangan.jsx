@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { journalsApi, assessmentsApi, finalsApi, componentsApi } from "../../api/index.js";
+import { journalsApi, assessmentsApi, finalAssessmentsApi, componentsApi } from "../../api/index.js";
 
 function mingguKe(start, date) {
   const diff = (new Date(date) - new Date(start)) / 86400000;
@@ -23,7 +23,7 @@ function StatusPerkembangan({ onMeta, placement }) {
           journalsApi.index({ placement_id: placement?.id }).catch(() => ({ data: [] })),
           assessmentsApi.index({ placement_id: placement?.id }).catch(() => ({ data: [] })),
           componentsApi.index().catch(() => ({ data: [] })),
-          finalsApi.index({ placement_id: placement?.id }).catch(() => ({ data: [] })),
+          finalAssessmentsApi.index({ placement_id: placement?.id }).catch(() => ({ data: [] })),
         ]);
         setJournals(jRes?.data ?? []);
         // Nilai komponen industri apa adanya (skor 0-100 dari backend).
@@ -52,13 +52,17 @@ function StatusPerkembangan({ onMeta, placement }) {
     journals.some((j) => mingguKe(start, j.journal_date) === m)
   );
 
-  // Kompetensi dari penilaian industri (skor backend 0-100 → %).
-  const compName = (id) => components.find((c) => String(c.id) === String(id))?.name || `Komponen #${id}`;
-  const kompetensi = [...new Map(evals.filter((e) => ["company", "supervisor"].includes(e.assessor_role)).map((e) => [e.component_id, e])).values()]
-    .map((e) => ({ label: compName(e.component_id), pct: Math.max(0, Math.min(100, Math.round(Number(e.score)))) }));
-
-  const kompetensiTampil = kompetensi.length > 0 ? kompetensi : null;
-
+  const byComponent = new Map();
+  for (const evaluation of evals) {
+    if (!["company", "supervisor"].includes(evaluation.assessor_role)) continue;
+    const scores = byComponent.get(evaluation.component_id) || [];
+    scores.push(Number(evaluation.score));
+    byComponent.set(evaluation.component_id, scores);
+  }
+  const kompetensiTampil = [...byComponent].map(([componentId, scores]) => ({
+    label: components.find((component) => String(component.id) === String(componentId))?.name || `Komponen #${componentId}`,
+    pct: Math.max(0, Math.min(100, Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length))),
+  }));
   const nilaiTerkunci = !finalScore;
 
   return (
@@ -91,7 +95,9 @@ function StatusPerkembangan({ onMeta, placement }) {
             <h3 className="siswa-card-title">Kompetensi</h3>
             <span className="siswa-muted" style={{ fontSize: 12 }}>Penilaian pembimbing industri</span>
           </div>
-          {loading ? <p className="siswa-muted">Memuat…</p> : kompetensiTampil ? kompetensiTampil.map((k) => (
+          {loading ? <p className="siswa-muted">Memuat…</p> : kompetensiTampil.length === 0 ? (
+            <p className="siswa-muted">Belum ada penilaian pembimbing industri.</p>
+          ) : kompetensiTampil.map((k) => (
             <div key={k.label} style={{ marginBottom: 16 }}>
               <div className="siswa-between" style={{ marginBottom: 6 }}>
                 <b style={{ fontSize: 13.5, color: "#0f172a" }}>{k.label}</b>
@@ -99,7 +105,7 @@ function StatusPerkembangan({ onMeta, placement }) {
               </div>
               <div className="siswa-progress"><i style={{ width: `${k.pct}%` }}></i></div>
             </div>
-          )) : <p className="siswa-muted">Belum ada penilaian industri.</p>}
+          ))}
         </div>
       </div>
 

@@ -59,6 +59,19 @@ export async function getJournalsForPlacements(placements) {
     );
 }
 
+/** company_supervisor id milik user pembimbing yang sedang login. */
+export async function getMySupervisorId() {
+  const user = authApi.currentUser();
+  if (!user) return null;
+  try {
+    const res = await companiesApi.supervisorsApi.index();
+    const sup = arr(res).find((s) => String(s.user_id) === String(user.id));
+    return sup?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** company_id milik user industri yang sedang login (via company-supervisors). */
 export async function getMyCompanyId() {
   const user = authApi.currentUser();

@@ -11,6 +11,7 @@ class AssessmentComponent extends Model
         'description',
         'owner_type',
         'weight',
+        'assessor_role',
         'is_active',
     ];
 

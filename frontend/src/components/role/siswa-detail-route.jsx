@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { journalsApi } from "../../api/index.js";
+import { journalsApi, attendancesApi } from "../../api/index.js";
 import { getEnrichedPlacements } from "../../lib/role-data.js";
 import DetailSiswa from "./detail-siswa.jsx";
 
@@ -13,6 +13,7 @@ function SiswaDetailRoute({ variant = "guru", listPath, onMeta }) {
   const navigate = useNavigate();
   const [placement, setPlacement] = useState(null);
   const [journals, setJournals] = useState([]);
+  const [attendances, setAttendances] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,6 +35,14 @@ function SiswaDetailRoute({ variant = "guru", listPath, onMeta }) {
             setJournals(res?.data ?? []);
           } catch {
             /* abaikan */
+          }
+          if (variant === "industri") {
+            try {
+              const aRes = await attendancesApi.index({ placement_id: p.id });
+              setAttendances(aRes?.data ?? []);
+            } catch {
+              /* abaikan */
+            }
           }
         }
       } finally {
@@ -62,6 +71,7 @@ function SiswaDetailRoute({ variant = "guru", listPath, onMeta }) {
     <DetailSiswa
       placement={placement}
       journals={journals}
+      attendances={attendances}
       variant={variant}
       onBack={() => navigate(listPath)}
     />

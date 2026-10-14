@@ -6,8 +6,6 @@ import "./admin-pages.css";
 function CompanyForm({ initial, onCancel, onSaved }) {
   const [form, setForm] = useState({
     name: initial?.name || "",
-    industry: initial?.industry || "",
-    student_quota: initial?.student_quota ?? "",
     is_active: initial ? !!initial.is_active : true,
   });
   const [saving, setSaving] = useState(false);
@@ -26,8 +24,6 @@ function CompanyForm({ initial, onCancel, onSaved }) {
     try {
       const payload = {
         name: form.name.trim(),
-        industry: form.industry.trim(),
-        student_quota: Number(form.student_quota) || 0,
         is_active: form.is_active,
       };
       if (initial?.id) await companiesApi.update(initial.id, payload);
@@ -47,14 +43,10 @@ function CompanyForm({ initial, onCancel, onSaved }) {
         <span>Nama Perusahaan</span>
         <input value={form.name} onChange={set("name")} placeholder="cth PT Solusi Digital" />
       </label>
-      <label className="zip-field">
-        <span>Bidang</span>
-        <input value={form.industry} onChange={set("industry")} placeholder="cth Backend" />
-      </label>
-      <label className="zip-field">
-        <span>Kuota Siswa</span>
-        <input type="number" min="0" value={form.student_quota} onChange={set("student_quota")} placeholder="cth 6" />
-      </label>
+      <div className="zip-info-box" style={{ marginBottom: 4 }}>
+        <i className="fa-solid fa-circle-info"></i>
+        <span>Bidang & kuota diatur sendiri oleh perusahaan lewat menu Profil Perusahaan.</span>
+      </div>
       <label className="zip-field">
         <span>Status</span>
         <select

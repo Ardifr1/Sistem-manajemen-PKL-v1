@@ -38,6 +38,18 @@ export const PAGE_META = {
     title: "Penilaian Akhir",
     subtitle: "Komponen bobot • publikasi nilai",
   },
+  komponen: {
+    title: "Komponen Penilaian",
+    subtitle: "Bobot & peran penilai",
+  },
+  feedback: {
+    title: "Review Feedback",
+    subtitle: "Setujui/tolak feedback siswa",
+  },
+  publikasi: {
+    title: "Publikasi Nilai",
+    subtitle: "Terbitkan / batalkan nilai akhir",
+  },
   profil: {
     title: "Profil Saya",
     subtitle: "Data diri administrator",
@@ -59,6 +71,9 @@ const MENUS = [
     { key: "persetujuan", label: "Persetujuan", icon: "fa-clipboard-check" },
     { key: "jurnal", label: "Monitoring Jurnal", icon: "fa-book-open" },
     { key: "penilaian", label: "Penilaian Akhir", icon: "fa-award" },
+    { key: "komponen", label: "Komponen Penilaian", icon: "fa-list-check" },
+    { key: "feedback", label: "Review Feedback", icon: "fa-comments" },
+    { key: "publikasi", label: "Publikasi Nilai", icon: "fa-bullhorn" },
   ]},
 ];
 

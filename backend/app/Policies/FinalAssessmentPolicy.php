@@ -59,7 +59,7 @@ class FinalAssessmentPolicy
         return $user->role === 'admin';
     }
 
-    public function unpublish(User $user): bool
+    public function unpublish(User $user, FinalAssessment $finalAssessment): bool
     {
         return $user->role === 'admin';
     }

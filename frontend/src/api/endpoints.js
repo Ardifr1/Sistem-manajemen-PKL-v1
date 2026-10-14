@@ -14,6 +14,7 @@ export const ep = {
   auth: {
     login: "/login",
     logout: "/logout",
+    forgotPassword: "/forgot-password",
   },
   companies: {
     index: "/companies",
@@ -119,9 +120,10 @@ export const ep = {
   finalAssessments: {
     index: "/final-assessments",
     show: id("/final-assessments"),
-    store: "/final-assessments",
+    store: "/final-assessments/calculate",
     update: id("/final-assessments"),
     destroy: id("/final-assessments"),
+    calculate: "/final-assessments/calculate",
     publish: (fid) => `/final-assessments/${fid}/publish`,
     unpublish: (fid) => `/final-assessments/${fid}/unpublish`,
   },
@@ -142,6 +144,8 @@ export const ep = {
     store: "/users",
     update: id("/users"),
     destroy: id("/users"),
+    resetRequests: "/password-reset-requests",
+    resolveResetRequest: id("/password-reset-requests"),
   },
 };
 

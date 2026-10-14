@@ -5,6 +5,7 @@ import IndustriDashboard from "./pages/dashboard industri/dashboard-industri.jsx
 import PerusahaanDashboard from "./pages/dashboard perusahaan/dashboard-perusahaan.jsx";
 import SiswaDashboard from "./pages/dashboard siswa/dashboard-siswa.jsx";
 import Login from "./pages/auth/login.jsx";
+import LupaPassword from "./pages/auth/lupa-password.jsx";
 import { authApi } from "./api/index.js";
 
 const TOKEN_KEY = "simagang_token";
@@ -67,6 +68,14 @@ function App() {
           element={
             <GuestRoute>
               <Login />
+            </GuestRoute>
+          }
+        />
+        <Route
+          path="/lupa-password"
+          element={
+            <GuestRoute>
+              <LupaPassword />
             </GuestRoute>
           }
         />

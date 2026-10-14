@@ -13,8 +13,9 @@ class AssessmentPolicyTest extends TestCase
     use RefreshDatabase;
     use ManagesPklTestData;
 
-    public function test_company_can_create_assessment_for_its_placement(): void
+    public function test_company_cannot_create_assessment_even_for_its_placement(): void
     {
+        // Model penilaian baru: hanya guru & pembimbing industri yang menilai.
         $student = $this->createUser('student', 'student_a');
         $company = $this->createCompany();
         $period = $this->createPeriod();
@@ -30,7 +31,49 @@ class AssessmentPolicyTest extends TestCase
             'placement_id' => $placement->id,
             'component_id' => $component->id,
             'score' => 90,
+        ])->assertForbidden();
+    }
+
+    public function test_supervisor_can_create_assessment_for_assigned_student(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $placement = $this->createPlacement($student, $company, $period);
+        $component = $this->createComponent();
+
+        $supervisorUser = $this->createUser('supervisor', 'supervisor_a');
+        $supervisor = $this->attachCompanySupervisor($supervisorUser, $company);
+        $placement->update(['supervisor_id' => $supervisor->id]);
+
+        Sanctum::actingAs($supervisorUser);
+
+        $this->postJson('/api/assessments', [
+            'placement_id' => $placement->id,
+            'component_id' => $component->id,
+            'score' => 85,
         ])->assertCreated();
+    }
+
+    public function test_supervisor_cannot_create_assessment_for_unassigned_student(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $company = $this->createCompany();
+        $otherCompany = $this->createCompany('PT Lain');
+        $period = $this->createPeriod();
+        $placement = $this->createPlacement($student, $company, $period);
+        $component = $this->createComponent();
+
+        $supervisorUser = $this->createUser('supervisor', 'supervisor_b');
+        $this->attachCompanySupervisor($supervisorUser, $otherCompany);
+
+        Sanctum::actingAs($supervisorUser);
+
+        $this->postJson('/api/assessments', [
+            'placement_id' => $placement->id,
+            'component_id' => $component->id,
+            'score' => 85,
+        ])->assertForbidden();
     }
 
     public function test_company_cannot_create_assessment_for_other_company_placement(): void
@@ -129,7 +172,7 @@ class AssessmentPolicyTest extends TestCase
         ])->assertForbidden();
     }
 
-    public function test_assessor_role_cannot_be_spoofed(): void
+    public function test_supervisor_assessor_role_cannot_be_spoofed(): void
     {
         $student = $this->createUser('student', 'student_a');
         $company = $this->createCompany();
@@ -137,10 +180,11 @@ class AssessmentPolicyTest extends TestCase
         $placement = $this->createPlacement($student, $company, $period);
         $component = $this->createComponent('industri');
 
-        $companyUser = $this->createUser('company', 'company_a');
-        $this->attachCompanySupervisor($companyUser, $company);
+        $supervisorUser = $this->createUser('supervisor', 'supervisor_a');
+        $supervisor = $this->attachCompanySupervisor($supervisorUser, $company);
+        $placement->update(['supervisor_id' => $supervisor->id]);
 
-        Sanctum::actingAs($companyUser);
+        Sanctum::actingAs($supervisorUser);
 
         $response = $this->postJson('/api/assessments', [
             'placement_id' => $placement->id,
@@ -151,8 +195,8 @@ class AssessmentPolicyTest extends TestCase
         ]);
 
         $response->assertCreated();
-        $this->assertSame('company', $response->json('data.assessor_role'));
-        $this->assertSame($companyUser->id, $response->json('data.assessed_by'));
+        $this->assertSame('supervisor', $response->json('data.assessor_role'));
+        $this->assertSame($supervisorUser->id, $response->json('data.assessed_by'));
     }
 
     public function test_supervisor_can_only_assess_assigned_student(): void
@@ -198,10 +242,11 @@ class AssessmentPolicyTest extends TestCase
         $component = $this->createComponent('industri');
         $component->update(['is_active' => false]);
 
-        $companyUser = $this->createUser('company', 'company_a');
-        $this->attachCompanySupervisor($companyUser, $company);
+        $supervisorUser = $this->createUser('supervisor', 'supervisor_a');
+        $supervisor = $this->attachCompanySupervisor($supervisorUser, $company);
+        $placement->update(['supervisor_id' => $supervisor->id]);
 
-        Sanctum::actingAs($companyUser);
+        Sanctum::actingAs($supervisorUser);
 
         $this->postJson('/api/assessments', [
             'placement_id' => $placement->id,
@@ -319,17 +364,19 @@ class AssessmentPolicyTest extends TestCase
 
     public function test_assessor_can_update_own_assessment(): void
     {
+        // Model baru: penilai adalah guru / pembimbing industri.
         $student = $this->createUser('student', 'student_a');
         $company = $this->createCompany();
         $period = $this->createPeriod();
         $placement = $this->createPlacement($student, $company, $period);
         $component = $this->createComponent('industri');
 
-        $companyUser = $this->createUser('company', 'company_a');
-        $this->attachCompanySupervisor($companyUser, $company);
-        $assessment = $this->createAssessment($placement, $component, $companyUser);
+        $supervisorUser = $this->createUser('supervisor', 'supervisor_a');
+        $supervisor = $this->attachCompanySupervisor($supervisorUser, $company);
+        $placement->update(['supervisor_id' => $supervisor->id]);
+        $assessment = $this->createAssessment($placement, $component, $supervisorUser);
 
-        Sanctum::actingAs($companyUser);
+        Sanctum::actingAs($supervisorUser);
 
         $this->putJson("/api/assessments/{$assessment->id}", [
             'score' => 95,

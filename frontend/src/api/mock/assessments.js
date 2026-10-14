@@ -68,13 +68,16 @@ const components = [
   { id: 7, name: "Presentasi & Pemahaman", owner_type: "guru", weight: 15, is_active: true },
 ];
 export const componentsApi = crud(components, "Komponen penilaian", "komponen penilaian");
-
 const finals = [
   { id: 1, placement_id: 3, final_score: 85.5, status: "published", finalized_by: 2, finalized_at: "2026-10-01T10:00:00Z", published_by: 1, published_at: "2026-10-02T10:00:00Z", unpublish_reason: null },
 ];
 const finalsBase = crud(finals, "Penilaian akhir", "penilaian akhir");
-export const finalsApi = {
+export const finalAssessmentsApi = {
   ...finalsBase,
+  async calculate(placement_id) {
+    void placement_id;
+    return { message: "Mode mock: perhitungan otomatis tidak tersedia.", data: null };
+  },
   async publish(id) {
     await delay();
     const row = finals.find((r) => r.id === Number(id));
@@ -95,3 +98,4 @@ export const finalsApi = {
 };
 
 export const auditLogsApi = crud([], "Audit log", "audit log");
+export const finalsApi = finalAssessmentsApi;

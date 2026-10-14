@@ -43,6 +43,12 @@ export async function logout() {
   return ok("Logout berhasil.", null);
 }
 
+export async function forgotPassword(username) {
+  await delay();
+  void username;
+  return { message: "Permintaan terkirim. Hubungi admin sekolah untuk mendapatkan password baru.", data: null };
+}
+
 export function currentUser() {
   try {
     return JSON.parse(localStorage.getItem("simagang_user") || "null");

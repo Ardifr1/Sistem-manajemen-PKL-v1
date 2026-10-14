@@ -70,6 +70,7 @@ export const assessmentsApi = pick(assessmentsMock, assessmentsLive);
 export const componentsApi = pick(assessmentsMock, assessmentsLive).componentsApi;
 export const finalsApi = pick(assessmentsMock, assessmentsLive).finalsApi;
 export const auditLogsApi = pick(assessmentsMock, assessmentsLive).auditLogsApi;
+export const finalAssessmentsApi = pick(assessmentsMock, assessmentsLive).finalAssessmentsApi;
 export const profilesApi = pick(profilesMock, profilesLive);
 export const usersApi = pick(usersMock, usersLive);
 export const dashboardApi = pick(dashboardMock, dashboardLive);

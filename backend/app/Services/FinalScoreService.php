@@ -81,6 +81,7 @@ class FinalScoreService
             return [
                 'ok' => false,
                 'message' => 'Komponen berikut belum dinilai: '.implode(', ', $missing).'.',
+                'missing' => $missing,
             ];
         }
 

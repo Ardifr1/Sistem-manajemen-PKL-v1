@@ -11,6 +11,9 @@ import DataSiswa from "./DataSiswa.jsx";
 import DataGuru from "./DataGuru.jsx";
 import MonitoringJurnal from "./MonitoringJurnal.jsx";
 import PenilaianAdmin from "./PenilaianAdmin.jsx";
+import KomponenPenilaian from "./KomponenPenilaian.jsx";
+import ReviewFeedback from "./ReviewFeedback.jsx";
+import PublikasiNilai from "./PublikasiNilai.jsx";
 import ProfilAdmin from "./ProfilAdmin.jsx";
 
 const MENUS = [
@@ -23,6 +26,9 @@ const MENUS = [
   { key: "persetujuan", path: "/admin/persetujuan" },
   { key: "jurnal", path: "/admin/jurnal" },
   { key: "penilaian", path: "/admin/penilaian" },
+  { key: "komponen", path: "/admin/komponen" },
+  { key: "feedback", path: "/admin/feedback" },
+  { key: "publikasi", path: "/admin/publikasi" },
   { key: "profil", path: "/admin/profil" },
 ];
 
@@ -35,6 +41,9 @@ function activeKey(pathname) {
   if (pathname.startsWith("/admin/persetujuan")) return "persetujuan";
   if (pathname.startsWith("/admin/jurnal")) return "jurnal";
   if (pathname.startsWith("/admin/penilaian")) return "penilaian";
+  if (pathname.startsWith("/admin/komponen")) return "komponen";
+  if (pathname.startsWith("/admin/feedback")) return "feedback";
+  if (pathname.startsWith("/admin/publikasi")) return "publikasi";
   if (pathname.startsWith("/admin/profil")) return "profil";
   return "dashboard";
 }
@@ -68,6 +77,9 @@ function DashboardAdmin() {
         <Route path="persetujuan" element={<Persetujuan onMeta={setMeta} />} />
         <Route path="jurnal" element={<MonitoringJurnal onMeta={setMeta} />} />
         <Route path="penilaian" element={<PenilaianAdmin onMeta={setMeta} />} />
+        <Route path="komponen" element={<KomponenPenilaian onMeta={setMeta} />} />
+        <Route path="feedback" element={<ReviewFeedback onMeta={setMeta} />} />
+        <Route path="publikasi" element={<PublikasiNilai onMeta={setMeta} />} />
         <Route path="profil" element={<ProfilAdmin onMeta={setMeta} />} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

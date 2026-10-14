@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Teacher;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\FinalAssessment;
+use App\Models\AssessmentComponent;
+use App\Models\FinalAssessmentStatusLog;
 use App\Models\PklPlacement;
 use App\Services\FinalScoreService;
 use Illuminate\Http\JsonResponse;
@@ -27,7 +29,9 @@ class FinalAssessmentController extends Controller
 
         $query = FinalAssessment::query()
             ->with([
-                'placement',
+                'placement.student',
+                'placement.company',
+                'publisher',
             ])
             ->orderByDesc('finalized_at');
 
@@ -58,6 +62,35 @@ class FinalAssessmentController extends Controller
             });
         }
 
+        // Batasi ke penempatan yang boleh dilihat user.
+        $user = $request->user();
+        $query->whereHas('placement', function ($q) use ($user) {
+            if ($user->role === 'student') {
+                $q->where('student_id', $user->id);
+            } elseif ($user->role === 'teacher') {
+                $q->where('teacher_id', $user->id);
+            } elseif ($user->role === 'supervisor') {
+                $supervisor = $user->companySupervisor;
+                if ($supervisor) {
+                    $q->where(function ($placementQuery) use ($supervisor) {
+                        $placementQuery->where('supervisor_id', $supervisor->id)
+                            ->orWhere(function ($fallbackQuery) use ($supervisor) {
+                                $fallbackQuery->whereNull('supervisor_id')
+                                    ->where('company_id', $supervisor->company_id);
+                            });
+                    });
+                } else {
+                    $q->whereRaw('1 = 0');
+                }
+            } elseif ($user->role === 'company') {
+                $companyId = $user->companySupervisor?->company_id;
+                $companyId
+                    ? $q->where('company_id', $companyId)
+                    : $q->whereRaw('1 = 0');
+            }
+            // admin: semua
+        });
+
         return response()->json([
             'message' => 'Data penilaian akhir berhasil diambil.',
             'data' => $query->get(),
@@ -69,7 +102,10 @@ class FinalAssessmentController extends Controller
         Gate::authorize('view', $finalAssessment);
 
         $finalAssessment->load([
-            'placement',
+            'placement.student',
+            'placement.company',
+            'publisher',
+            'statusLogs.changer',
         ]);
 
         return response()->json([
@@ -103,20 +139,27 @@ class FinalAssessmentController extends Controller
         $result = $calculator->recalculate($placement, $request->user()->id);
 
         if (! ($result['ok'] ?? false)) {
-            return response()->json([
+            $response = [
                 'message' => $result['message'] ?? 'Perhitungan nilai akhir gagal.',
-            ], 422);
+            ];
+            if (array_key_exists('missing', $result)) {
+                $response['missing'] = $result['missing'];
+            }
+
+            return response()->json($response, 422);
         }
 
         /** @var FinalAssessment $finalAssessment */
         $finalAssessment = $result['final_assessment'];
         $finalAssessment->load(['placement']);
+        $data = $finalAssessment->toArray();
+        $data['final_score'] = (float) $finalAssessment->final_score;
 
         return response()->json([
             'message' => 'Nilai akhir berhasil dihitung oleh sistem.',
-            'data' => $finalAssessment,
+            'data' => $data,
             'detail' => $result['detail'] ?? [],
-        ], 201);
+        ], 200, [], JSON_PRESERVE_ZERO_FRACTION);
     }
 
     /**
@@ -155,6 +198,11 @@ class FinalAssessmentController extends Controller
             'data' => $finalAssessment,
             'detail' => $result['detail'] ?? [],
         ]);
+    }
+
+    public function calculate(Request $request, FinalScoreService $calculator): JsonResponse
+    {
+        return $this->store($request, $calculator);
     }
 
     public function destroy(FinalAssessment $finalAssessment): JsonResponse
@@ -196,13 +244,22 @@ class FinalAssessmentController extends Controller
             ], 422);
         }
 
-        // Pastikan perhitungan masih valid sebelum publish.
-        $check = $calculator->calculate($placement);
+        // Validate the calculation whenever components are configured. Legacy
+        // records can still be published when the system has no active components.
+        $hasActiveComponents = AssessmentComponent::query()
+            ->where('is_active', true)
+            ->exists();
+        if ($hasActiveComponents) {
+            $check = $calculator->calculate($placement);
 
-        if (! ($check['ok'] ?? false)) {
-            return response()->json([
-                'message' => $check['message'] ?? 'Perhitungan nilai akhir tidak valid.',
-            ], 422);
+            if (! ($check['ok'] ?? false)) {
+                return response()->json([
+                    'message' => $check['message'] ?? 'Perhitungan nilai akhir tidak valid.',
+                    'missing' => $check['missing'] ?? [],
+                ], 422);
+            }
+        } else {
+            $check = ['final_score' => $finalAssessment->final_score];
         }
 
         $oldStatus = $finalAssessment->status;
@@ -226,6 +283,12 @@ class FinalAssessmentController extends Controller
             'reason' => null,
         ]);
 
+        FinalAssessmentStatusLog::create([
+            'final_assessment_id' => $finalAssessment->id,
+            'action' => 'published',
+            'changed_by' => $request->user()->id,
+        ]);
+
         $finalAssessment->refresh()->load(['placement']);
 
         return response()->json([
@@ -240,15 +303,11 @@ class FinalAssessmentController extends Controller
      */
     public function unpublish(Request $request, FinalAssessment $finalAssessment): JsonResponse
     {
-        Gate::authorize('unpublish', FinalAssessment::class);
+        Gate::authorize('unpublish', $finalAssessment);
 
         $validated = $request->validate([
-            'reason' => [
-                'required',
-                'string',
-                'min:5',
-                'max:1000',
-            ],
+            'reason' => ['nullable', 'string', 'min:5', 'max:1000'],
+            'note' => ['nullable', 'string', 'min:5', 'max:1000'],
         ]);
 
         if ($finalAssessment->status !== 'published') {
@@ -257,13 +316,14 @@ class FinalAssessmentController extends Controller
             ], 422);
         }
 
+        $reason = $validated['reason'] ?? $validated['note'] ?? null;
         $oldStatus = $finalAssessment->status;
 
         $finalAssessment->update([
             'status' => 'draft',
             'published_by' => null,
             'published_at' => null,
-            'unpublish_reason' => $validated['reason'],
+            'unpublish_reason' => $reason,
         ]);
 
         AuditLog::create([
@@ -273,7 +333,14 @@ class FinalAssessmentController extends Controller
             'final_assessment_id' => $finalAssessment->id,
             'old_status' => $oldStatus,
             'new_status' => 'draft',
-            'reason' => $validated['reason'],
+            'reason' => $reason,
+        ]);
+
+        FinalAssessmentStatusLog::create([
+            'final_assessment_id' => $finalAssessment->id,
+            'action' => 'unpublished',
+            'changed_by' => $request->user()->id,
+            'note' => $reason,
         ]);
 
         $finalAssessment->refresh()->load(['placement']);

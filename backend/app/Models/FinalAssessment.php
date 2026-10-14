@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class FinalAssessment extends Model
 {
@@ -25,6 +26,11 @@ class FinalAssessment extends Model
             'finalized_at' => 'datetime',
             'published_at' => 'datetime',
         ];
+    }
+
+    public function statusLogs(): HasMany
+    {
+        return $this->hasMany(FinalAssessmentStatusLog::class)->orderByDesc('created_at');
     }
 
     public function placement(): BelongsTo
