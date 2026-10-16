@@ -45,13 +45,24 @@ export async function store(payload) {
   }
   const row = {
     id: nextId(),
+    // Username dibuat otomatis dari email — tidak lagi diinput admin.
     username: payload.email.split("@")[0].toLowerCase().replace(/[^a-z0-9.]/g, ""),
     is_active: true,
     ...payload,
     password: undefined,
   };
   db.push({ ...row, password: "hashed" });
-  return ok("Pengguna berhasil ditambahkan.", row);
+
+  const res = ok("Pengguna berhasil ditambahkan.", row);
+  // Meniru backend: akun tanpa password manual memakai tautan aktivasi.
+  if (!payload.password) {
+    res.delivery = payload.phone
+      ? { email: { status: "not_configured", message: "Mode mock — email tidak dikirim." },
+          whatsapp: { status: "not_configured", message: "Mode mock — WhatsApp tidak dikirim." } }
+      : { email: { status: "not_configured", message: "Mode mock — email tidak dikirim." },
+          whatsapp: { status: "failed", message: "Nomor HP penerima tidak tersedia." } };
+  }
+  return res;
 }
 
 export async function update(id, payload) {
@@ -69,6 +80,18 @@ export async function destroy(id) {
   if (i < 0) throw Object.assign(new Error("Pengguna tidak ditemukan."), { status: 404 });
   db.splice(i, 1);
   return ok("Pengguna berhasil dihapus.", null);
+}
+
+export async function resendAccount(id) {
+  await delay();
+  const row = db.find((r) => r.id === Number(id));
+  if (!row) throw Object.assign(new Error("Pengguna tidak ditemukan."), { status: 404 });
+  return ok("Informasi akun dikirim ulang.", {
+    delivery: {
+      email: { status: "sent", message: "Email aktivasi terkirim (mock).", driver: "log" },
+      whatsapp: { status: "not_configured", message: "Layanan WhatsApp belum dikonfigurasi (mock)." },
+    },
+  });
 }
 
 export async function resetRequests() {

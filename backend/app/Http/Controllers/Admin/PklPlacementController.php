@@ -3,9 +3,13 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
+use App\Models\Company;
+use App\Models\PklApplication;
 use App\Models\PklPlacement;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class PklPlacementController extends Controller
@@ -150,8 +154,30 @@ class PklPlacementController extends Controller
             ], 422);
         }
 
+        $company = Company::findOrFail($validated['company_id']);
+
+        // Hard Block konflik kepentingan (sisi sekolah): admin yang menjadi
+        // anggota aktif perusahaan tujuan tidak boleh membuat penempatan.
+        Gate::authorize('createForCompany', [PklPlacement::class, (int) $company->id]);
+
+        // Perusahaan nonmitra / belum diverifikasi / nonaktif tidak boleh
+        // dipakai untuk penempatan resmi (PRD bagian D).
+        if (! $company->isUsableForPlacement()) {
+            return response()->json([
+                'message' => 'Perusahaan belum terverifikasi sebagai mitra aktif sehingga tidak dapat dipakai untuk penempatan.',
+            ], 422);
+        }
+
+        // Penempatan tidak boleh aktif sebelum tanggal mulai PKL.
+        if ($validated['status'] === 'active'
+            && strtotime((string) $validated['start_date']) > strtotime(now()->toDateString())) {
+            return response()->json([
+                'message' => 'Penempatan belum dapat diaktifkan sebelum tanggal mulai PKL.',
+            ], 422);
+        }
+
         if (! empty($validated['application_id'])) {
-            $application = \App\Models\PklApplication::query()->find($validated['application_id']);
+            $application = PklApplication::query()->find($validated['application_id']);
 
             if (
                 $application->student_id !== (int) $validated['student_id']
@@ -172,13 +198,70 @@ class PklPlacementController extends Controller
             }
         }
 
-        $placement = PklPlacement::create($validated);
+        // Pembuatan penempatan + pemeriksaan kuota dijalankan dalam satu
+        // transaksi dengan mengunci baris perusahaan agar kuota aman dari
+        // kondisi balapan (dua admin menempatkan siswa bersamaan).
+        $result = DB::transaction(function () use ($validated, $company, $request) {
+            $lockedCompany = Company::query()
+                ->whereKey($company->id)
+                ->lockForUpdate()
+                ->first();
 
-        if (! empty($validated['application_id'])) {
-            \App\Models\PklApplication::query()
-                ->whereKey($validated['application_id'])
-                ->update(['status' => 'accepted']);
+            $quotaError = $this->quotaErrorMessage($lockedCompany, (int) $validated['pkl_period_id'], null);
+
+            if ($quotaError !== null) {
+                return ['error' => $quotaError];
+            }
+
+            $placement = PklPlacement::create($validated);
+
+            if (! empty($validated['application_id'])) {
+                PklApplication::query()
+                    ->whereKey($validated['application_id'])
+                    ->update(['status' => 'accepted']);
+            }
+
+            // "Bila diterima beberapa perusahaan, siswa harus memilih satu":
+            // begitu penempatan resmi dibuat, tawaran lain siswa pada periode
+            // yang sama ditutup agar siswa hanya berada pada satu perusahaan.
+            $closedOffers = PklApplication::query()
+                ->where('student_id', $validated['student_id'])
+                ->where('pkl_period_id', $validated['pkl_period_id'])
+                ->where('status', 'accepted')
+                ->when(
+                    ! empty($validated['application_id']),
+                    fn ($q) => $q->where('id', '!=', $validated['application_id'])
+                )
+                ->update(['status' => 'rejected']);
+
+            if ($closedOffers > 0) {
+                AuditLog::create([
+                    'user_id' => $request->user()?->id,
+                    'action' => 'application_offers_closed',
+                    'subject_type' => PklPlacement::class,
+                    'subject_id' => $placement->id,
+                    'placement_id' => $placement->id,
+                    'new_status' => 'rejected',
+                    'reason' => 'Siswa telah ditempatkan pada perusahaan lain; tawaran lain ditutup.',
+                    'metadata' => [
+                        'student_id' => (int) $validated['student_id'],
+                        'pkl_period_id' => (int) $validated['pkl_period_id'],
+                        'closed_count' => $closedOffers,
+                    ],
+                ]);
+            }
+
+            return ['placement' => $placement];
+        });
+
+        if (isset($result['error'])) {
+            return response()->json([
+                'message' => $result['error'],
+            ], 422);
         }
+
+        /** @var PklPlacement $placement */
+        $placement = $result['placement'];
 
         $placement->load([
             'student',
@@ -244,6 +327,39 @@ class PklPlacementController extends Controller
             ], 422);
         }
 
+        // Perpindahan penempatan ke perusahaan lain wajib melewati pemeriksaan
+        // konflik kepentingan, status mitra, dan kuota perusahaan baru.
+        if (isset($validated['company_id'])
+            && (int) $validated['company_id'] !== (int) $pklPlacement->company_id) {
+            $newCompany = Company::findOrFail($validated['company_id']);
+
+            Gate::authorize('createForCompany', [PklPlacement::class, (int) $newCompany->id]);
+
+            if (! $newCompany->isUsableForPlacement()) {
+                return response()->json([
+                    'message' => 'Perusahaan belum terverifikasi sebagai mitra aktif sehingga tidak dapat dipakai untuk penempatan.',
+                ], 422);
+            }
+
+            $quotaError = $this->quotaErrorMessage(
+                $newCompany,
+                (int) ($validated['pkl_period_id'] ?? $pklPlacement->pkl_period_id),
+                (int) $pklPlacement->id
+            );
+
+            if ($quotaError !== null) {
+                return response()->json(['message' => $quotaError], 422);
+            }
+        }
+
+        // Penempatan tidak boleh DIAKTIFKAN sebelum tanggal mulai PKL.
+        if (($validated['status'] ?? null) === 'active'
+            && strtotime((string) $startDate) > strtotime(now()->toDateString())) {
+            return response()->json([
+                'message' => 'Penempatan belum dapat diaktifkan sebelum tanggal mulai PKL.',
+            ], 422);
+        }
+
         $pklPlacement->update($validated);
 
         $pklPlacement->load([
@@ -269,5 +385,35 @@ class PklPlacementController extends Controller
         return response()->json([
             'message' => 'Penempatan PKL berhasil dihapus.',
         ]);
+    }
+
+    /**
+     * Pesan kesalahan bila kuota perusahaan untuk periode PKL terkait sudah
+     * penuh, atau null bila penempatan masih diperbolehkan.
+     *
+     * Penempatan berstatus `cancelled` tidak dihitung sebagai penggunaan
+     * kuota. Harus dipanggil di dalam transaksi dengan baris company terkunci
+     * (lockForUpdate) agar aman dari kondisi balapan.
+     */
+    private function quotaErrorMessage(Company $company, int $periodId, ?int $ignorePlacementId): ?string
+    {
+        $quota = (int) $company->student_quota;
+
+        if ($quota <= 0) {
+            return 'Perusahaan tidak memiliki kuota siswa.';
+        }
+
+        $used = PklPlacement::query()
+            ->where('company_id', $company->id)
+            ->where('pkl_period_id', $periodId)
+            ->where('status', '!=', 'cancelled')
+            ->when($ignorePlacementId !== null, fn ($q) => $q->where('id', '!=', $ignorePlacementId))
+            ->count();
+
+        if ($used >= $quota) {
+            return 'Kuota siswa untuk perusahaan pada periode PKL ini sudah penuh.';
+        }
+
+        return null;
     }
 }

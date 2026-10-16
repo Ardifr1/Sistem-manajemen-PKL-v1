@@ -46,6 +46,12 @@ class FinalAssessmentController extends Controller
                 'placement_id',
                 $validated['placement_id']
             );
+
+            // Siswa hanya boleh melihat nilai yang sudah dipublikasikan —
+            // jangan bocorkan draf walau memakai filter placement_id.
+            if ($request->user()->role === 'student') {
+                $query->where('status', 'published');
+            }
         } else {
             $user = $request->user();
             $query->whereHas('placement', function ($q) use ($user) {
@@ -228,7 +234,9 @@ class FinalAssessmentController extends Controller
      */
     public function publish(Request $request, FinalAssessment $finalAssessment, FinalScoreService $calculator): JsonResponse
     {
-        Gate::authorize('publish', FinalAssessment::class);
+        // Hard Block konflik kepentingan diperiksa di policy (butuh company_id
+        // dari penempatan terkait).
+        Gate::authorize('publish', $finalAssessment);
 
         $placement = $finalAssessment->placement ?? PklPlacement::findOrFail($finalAssessment->placement_id);
 
@@ -305,9 +313,11 @@ class FinalAssessmentController extends Controller
     {
         Gate::authorize('unpublish', $finalAssessment);
 
+        // Alasan wajib (BR: pembatalan publikasi harus terdokumentasi).
+        // Diterima lewat `reason` atau alias `note`; keduanya kosong → 422.
         $validated = $request->validate([
-            'reason' => ['nullable', 'string', 'min:5', 'max:1000'],
-            'note' => ['nullable', 'string', 'min:5', 'max:1000'],
+            'reason' => ['required_without:note', 'nullable', 'string', 'min:5', 'max:1000'],
+            'note' => ['required_without:reason', 'nullable', 'string', 'min:5', 'max:1000'],
         ]);
 
         if ($finalAssessment->status !== 'published') {

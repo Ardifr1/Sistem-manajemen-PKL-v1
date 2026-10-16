@@ -73,7 +73,7 @@ class PklPlacementPolicyTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_teacher_can_view_any_placement(): void
+    public function test_teacher_can_view_placement_of_assigned_student(): void
     {
         $student = $this->createUser('student', 'student_a');
         $company = $this->createCompany();
@@ -81,11 +81,28 @@ class PklPlacementPolicyTest extends TestCase
         $placement = $this->createPlacement($student, $company, $period);
 
         $teacher = $this->createUser('teacher', 'teacher_a');
+        $this->assignTeacher($placement, $teacher);
 
         Sanctum::actingAs($teacher);
 
         $this->getJson("/api/pkl-placements/{$placement->id}")
             ->assertOk();
+    }
+
+    public function test_teacher_cannot_view_placement_of_unassigned_student(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $placement = $this->createPlacement($student, $company, $period);
+
+        // Guru yang belum ditugaskan ke penempatan ini.
+        $otherTeacher = $this->createUser('teacher', 'teacher_b');
+
+        Sanctum::actingAs($otherTeacher);
+
+        $this->getJson("/api/pkl-placements/{$placement->id}")
+            ->assertForbidden();
     }
 
     public function test_student_cannot_create_placement(): void

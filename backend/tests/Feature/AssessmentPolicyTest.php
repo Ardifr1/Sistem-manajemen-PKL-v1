@@ -123,6 +123,7 @@ class AssessmentPolicyTest extends TestCase
         $component = $this->createComponent('industri');
 
         $teacher = $this->createUser('teacher', 'teacher_a');
+        $this->assignTeacher($placement, $teacher);
 
         Sanctum::actingAs($teacher);
 
@@ -130,6 +131,48 @@ class AssessmentPolicyTest extends TestCase
             'placement_id' => $placement->id,
             'component_id' => $component->id,
             'score' => 90,
+        ])->assertForbidden();
+    }
+
+    public function test_teacher_cannot_assess_unassigned_student(): void
+    {
+        // Guru hanya boleh menilai siswa bimbingannya (placement.teacher_id).
+        $student = $this->createUser('student', 'student_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $placement = $this->createPlacement($student, $company, $period);
+        $component = $this->createComponent('guru');
+
+        $teacher = $this->createUser('teacher', 'teacher_b');
+
+        Sanctum::actingAs($teacher);
+
+        $this->postJson('/api/assessments', [
+            'placement_id' => $placement->id,
+            'component_id' => $component->id,
+            'score' => 90,
+        ])->assertForbidden();
+    }
+
+    public function test_supervisor_cannot_assess_placement_without_assignment(): void
+    {
+        // BR-09a: tanpa penugasan spesifik (supervisor_id), pembimbing industri
+        // tidak boleh menilai walau satu perusahaan.
+        $student = $this->createUser('student', 'student_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $placement = $this->createPlacement($student, $company, $period);
+        $component = $this->createComponent('industri');
+
+        $supervisorUser = $this->createUser('supervisor', 'supervisor_a');
+        $this->attachCompanySupervisor($supervisorUser, $company);
+
+        Sanctum::actingAs($supervisorUser);
+
+        $this->postJson('/api/assessments', [
+            'placement_id' => $placement->id,
+            'component_id' => $component->id,
+            'score' => 85,
         ])->assertForbidden();
     }
 
@@ -142,6 +185,7 @@ class AssessmentPolicyTest extends TestCase
         $component = $this->createComponent('guru');
 
         $teacher = $this->createUser('teacher', 'teacher_a');
+        $this->assignTeacher($placement, $teacher);
 
         Sanctum::actingAs($teacher);
 

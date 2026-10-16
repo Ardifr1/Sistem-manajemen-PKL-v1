@@ -26,9 +26,9 @@ class AuditLogPolicyTest extends TestCase
         $this->scorePlacementFully($placement, $companyUser, $teacher);
 
         Sanctum::actingAs($teacher);
-        $created = $this->postJson('/api/final-assessments', [
+        $created = $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placement->id,
-        ])->assertCreated();
+        ])->assertOk();
         $id = $created->json('data.id');
 
         $admin = $this->createUser('admin', 'admin_a');

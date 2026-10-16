@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { usersApi, journalsApi, applicationsApi, placementsApi, profilesApi, ROLE_LABEL } from "../../api/index.js";
+import { usersApi, journalsApi, applicationsApi, placementsApi, profilesApi, companiesApi, ROLE_LABEL } from "../../api/index.js";
 import { UserCell, RoleBadge, StatusBadge, initials, avatarColor } from "../../components/admin/user-table.jsx";
 import { SkelCards } from "../../components/role/skeleton.jsx";
 import "./admin-pages.css";
@@ -21,6 +21,9 @@ function DetailPengguna({ row, onBack, onEdit, onHapus, onMeta }) {
   const [placement, setPlacement] = useState(null);
   const [companyName, setCompanyName] = useState("");
   const [teacherName, setTeacherName] = useState("");
+  // Status pengiriman ulang informasi akun (tautan aktivasi).
+  const [resending, setResending] = useState(false);
+  const [resendResult, setResendResult] = useState(null);
 
   useEffect(() => {
     onMeta?.({ title: "Detail Pengguna", subtitle: row.name });
@@ -99,7 +102,27 @@ function DetailPengguna({ row, onBack, onEdit, onHapus, onMeta }) {
               <StatusBadge active={row.is_active} />
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="zip-act zip-act-edit"
+              disabled={resending}
+              onClick={async () => {
+                setResending(true);
+                setResendResult(null);
+                try {
+                  const res = await usersApi.resendAccount(row.id);
+                  setResendResult(res?.data?.delivery || { error: "Status pengiriman tidak tersedia." });
+                } catch (err) {
+                  setResendResult({ error: err?.message || "Gagal mengirim ulang informasi akun." });
+                } finally {
+                  setResending(false);
+                }
+              }}
+            >
+              <i className="fa-solid fa-paper-plane" style={{ marginRight: 6 }}></i>
+              {resending ? "Mengirim…" : "Kirim ulang info akun"}
+            </button>
             <button type="button" className="zip-act zip-act-edit" onClick={onEdit}>
               <i className="fa-solid fa-pen" style={{ marginRight: 6 }}></i>Edit
             </button>
@@ -110,6 +133,41 @@ function DetailPengguna({ row, onBack, onEdit, onHapus, onMeta }) {
         </div>
       </div>
 
+      {resendResult && (
+        <div className="zip-delivery" role="status" aria-live="polite">
+          <strong>Status pengiriman ulang</strong>
+          {resendResult.error ? (
+            <div className="zip-delivery-row is-failed">
+              <span className="zip-delivery-msg">{resendResult.error}</span>
+            </div>
+          ) : (
+            DELIVERY_CHANNELS.map(([key, label]) => {
+              const item = resendResult[key];
+              if (!item) return null;
+              const state = item.status || "failed";
+              return (
+                <div key={key} className="zip-delivery-row">
+                  <span className="zip-delivery-channel">{label}</span>
+                  <span className={`zip-delivery-state is-${state}`}>
+                    <i
+                      className={`fa-solid ${
+                        state === "sent"
+                          ? "fa-circle-check"
+                          : state === "not_configured"
+                            ? "fa-triangle-exclamation"
+                            : "fa-circle-xmark"
+                      }`}
+                    ></i>
+                    {DELIVERY_LABEL[state] || state}
+                  </span>
+                  <span className="zip-delivery-msg">{item.message}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
       <div className="zip-cols2">
         <div className="zip-card">
           <h3 className="zip-card-title" style={{ marginTop: 0 }}>Data Diri</h3>
@@ -118,7 +176,7 @@ function DetailPengguna({ row, onBack, onEdit, onHapus, onMeta }) {
           <div className="zip-kv"><span>Kelas</span><strong>{profil.kelas || profil.class || "-"}</strong></div>
           <div className="zip-kv"><span>Jurusan</span><strong>{profil.jurusan || profil.major || "-"}</strong></div>
           <div className="zip-kv"><span>Email</span><strong>{row.email}</strong></div>
-          <div className="zip-kv"><span>No. HP</span><strong>{profil.phone || profil.no_hp || "-"}</strong></div>
+          <div className="zip-kv"><span>No. HP</span><strong>{row.phone || profil.phone || profil.no_hp || "-"}</strong></div>
           {row.role === "student" && (
             <div className="zip-kv"><span>Guru pembimbing</span><strong>{teacherName || "-"}</strong></div>
           )}
@@ -250,6 +308,18 @@ function HapusPengguna({ row, onCancel, onDeleted, onMeta }) {
 
 const ROLE_OPTIONS = ["admin", "teacher", "student", "company"];
 
+/** Kanal pengiriman informasi akun yang dilaporkan backend. */
+const DELIVERY_CHANNELS = [
+  ["email", "Email"],
+  ["whatsapp", "WhatsApp"],
+];
+
+const DELIVERY_LABEL = {
+  sent: "Terkirim",
+  failed: "Gagal",
+  not_configured: "Belum dikonfigurasi",
+};
+
 function roleLabel(role) {
   return ROLE_LABEL?.[role] || role;
 }
@@ -258,10 +328,9 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
   const isEdit = !!initial?.id;
   const [form, setForm] = useState({
     name: initial?.name || "",
-    username: initial?.username || "",
     email: initial?.email || "",
+    phone: initial?.phone || "",
     password: "",
-    password_confirmation: "",
     role: initial?.role || "student",
     nis: initial?.student_profile?.nis || "",
     nip: "",
@@ -269,8 +338,8 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [showPw, setShowPw] = useState(false);
-  const [showPw2, setShowPw2] = useState(false);
+  // Status pengiriman informasi akun (email + WhatsApp) untuk akun baru.
+  const [delivery, setDelivery] = useState(null);
 
   useEffect(() => {
     onMeta?.({
@@ -284,38 +353,42 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
   const submit = async (e) => {
     e.preventDefault();
     setError("");
-    if (!form.name.trim() || !form.username.trim() || !form.email.trim()) {
-      setError("Nama, username, dan email wajib diisi.");
+    if (!form.name.trim() || !form.email.trim()) {
+      setError("Nama dan email wajib diisi.");
       return;
     }
-    if (!isEdit || form.password) {
-      if (form.password.length < 8) {
-        setError("Password minimal 8 karakter.");
-        return;
-      }
-      if (form.password !== form.password_confirmation) {
-        setError("Konfirmasi password tidak cocok.");
-        return;
-      }
+    if (form.phone.trim() && !/^(\+62|62|0)8[0-9]{7,12}$/.test(form.phone.trim())) {
+      setError("Format nomor HP tidak valid (contoh: 081234567890).");
+      return;
+    }
+    if (form.password && form.password.length < 8) {
+      setError("Password minimal 8 karakter.");
+      return;
     }
     setSaving(true);
     try {
+      // Username dibuat otomatis oleh backend — tidak dikirim dari form.
       const payload = {
         name: form.name.trim(),
-        username: form.username.trim(),
         email: form.email.trim(),
+        phone: form.phone.trim() || null,
         role: form.role,
         is_active: form.is_active,
       };
       if (form.role === "student" && form.nis.trim()) payload.nis = form.nis.trim();
       if (form.role === "teacher" && form.nip.trim()) payload.nip = form.nip.trim();
-      if (form.password) {
-        payload.password = form.password;
-        payload.password_confirmation = form.password_confirmation;
+      if (form.password) payload.password = form.password;
+
+      if (isEdit) {
+        await usersApi.update(initial.id, payload);
+        onSaved?.();
+      } else {
+        const res = await usersApi.store(payload);
+        // Akun tanpa password manual: backend mengirim tautan aktivasi via
+        // email + WhatsApp dan mengembalikan status tiap kanal.
+        if (res?.delivery) setDelivery(res.delivery);
+        else onSaved?.();
       }
-      if (isEdit) await usersApi.update(initial.id, payload);
-      else await usersApi.store(payload);
-      onSaved?.();
     } catch (err) {
       setError(err?.message || "Gagal menyimpan pengguna.");
     } finally {
@@ -330,6 +403,42 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
         <form className="zip-card" onSubmit={submit} style={{ maxWidth: "none" }}>
           <h3 className="zip-card-title" style={{ marginTop: 0 }}>Informasi Akun</h3>
           {error && <div className="zip-error">{error}</div>}
+          {delivery && (
+            <div className="zip-delivery" role="status" aria-live="polite">
+              <strong>Status pengiriman informasi akun</strong>
+              {DELIVERY_CHANNELS.map(([key, label]) => {
+                const item = delivery[key];
+                if (!item) return null;
+                const state = item.status || "failed";
+                return (
+                  <div key={key} className={`zip-delivery-row is-${state}`}>
+                    <span className="zip-delivery-channel">{label}</span>
+                    <span className={`zip-delivery-state is-${state}`}>
+                      <i
+                        className={`fa-solid ${
+                          state === "sent"
+                            ? "fa-circle-check"
+                            : state === "not_configured"
+                              ? "fa-triangle-exclamation"
+                              : "fa-circle-xmark"
+                        }`}
+                      ></i>
+                      {DELIVERY_LABEL[state] || state}
+                    </span>
+                    <span className="zip-delivery-msg">{item.message}</span>
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                className="zip-btn-primary"
+                style={{ marginTop: 10 }}
+                onClick={onSaved}
+              >
+                Selesai
+              </button>
+            </div>
+          )}
           <label className="zip-field">
             <span>Nama Lengkap</span>
             <input value={form.name} onChange={set("name")} placeholder="cth Dewi Lestari" />
@@ -339,8 +448,17 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
             <input type="email" value={form.email} onChange={set("email")} placeholder="cth dewi@smk.sch.id" />
           </label>
           <label className="zip-field">
-            <span>Username</span>
-            <input value={form.username} onChange={set("username")} placeholder="dewi.xiirpl3" />
+            <span>Nomor HP (WhatsApp)</span>
+            <input
+              type="tel"
+              inputMode="tel"
+              value={form.phone}
+              onChange={set("phone")}
+              placeholder="cth 081234567890"
+            />
+            <small className="zip-hint">
+              Dipakai untuk mengirim tautan aktivasi via WhatsApp. Format: 08… / +62….
+            </small>
           </label>
           <label className="zip-field">
             <span>Peran</span>
@@ -372,34 +490,19 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
             </label>
           )}
           <label className="zip-field">
-            <span>Password{isEdit ? " (kosongkan jika tidak diubah)" : ""}</span>
-            <span className="zip-pw-wrap">
-              <input
-                type={showPw ? "text" : "password"}
-                value={form.password}
-                onChange={set("password")}
-                placeholder="Minimal 8 karakter"
-                autoComplete="new-password"
-              />
-              <button type="button" className="zip-pw-eye" onClick={() => setShowPw((s) => !s)} tabIndex={-1}>
-                <i className={`fa-solid ${showPw ? "fa-eye-slash" : "fa-eye"}`}></i>
-              </button>
-            </span>
-          </label>
-          <label className="zip-field">
-            <span>Konfirmasi Password</span>
-            <span className="zip-pw-wrap">
-              <input
-                type={showPw2 ? "text" : "password"}
-                value={form.password_confirmation}
-                onChange={set("password_confirmation")}
-                placeholder="Ulangi password"
-                autoComplete="new-password"
-              />
-              <button type="button" className="zip-pw-eye" onClick={() => setShowPw2((s) => !s)} tabIndex={-1}>
-                <i className={`fa-solid ${showPw2 ? "fa-eye-slash" : "fa-eye"}`}></i>
-              </button>
-            </span>
+            <span>Password{isEdit ? " (kosongkan jika tidak diubah)" : " (opsional)"}</span>
+            <input
+              type="password"
+              value={form.password}
+              onChange={set("password")}
+              placeholder="Minimal 8 karakter"
+              autoComplete="new-password"
+            />
+            <small className="zip-hint">
+              {isEdit
+                ? "Kosongkan bila tidak ingin mengubah password."
+                : "Kosongkan agar sistem mengirim tautan aktivasi via email & WhatsApp. Password tidak pernah dikirim sebagai teks biasa."}
+            </small>
           </label>
           <div className="zip-field">
             <span>Status Akun</span>

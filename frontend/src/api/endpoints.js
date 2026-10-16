@@ -15,6 +15,7 @@ export const ep = {
     login: "/login",
     logout: "/logout",
     forgotPassword: "/forgot-password",
+    setPassword: "/set-password",
   },
   companies: {
     index: "/companies",
@@ -36,6 +37,21 @@ export const ep = {
     update: id("/company-supervisors"),
     destroy: id("/company-supervisors"),
   },
+  // Keanggotaan perusahaan eksplisit (PRD bagian C).
+  companyMemberships: {
+    index: "/company-memberships",
+    show: id("/company-memberships"),
+    store: "/company-memberships",
+    update: id("/company-memberships"),
+    destroy: id("/company-memberships"),
+  },
+  // Pengajuan perusahaan nonmitra oleh siswa + verifikasi admin (PRD bagian D).
+  companyProposals: {
+    index: "/company-proposals",
+    show: id("/company-proposals"),
+    store: "/company-proposals",
+    verify: (companyId) => `/company-proposals/${companyId}/verify`,
+  },
   periods: {
     index: "/pkl-periods",
     show: id("/pkl-periods"),
@@ -49,6 +65,8 @@ export const ep = {
     store: "/pkl-applications",
     update: id("/pkl-applications"),
     destroy: id("/pkl-applications"),
+    // Pilihan final siswa (bila diterima beberapa perusahaan, pilih satu).
+    choose: (applicationId) => `/pkl-applications/${applicationId}/choose`,
   },
   applicationDocuments: {
     index: "/application-documents",
@@ -144,6 +162,7 @@ export const ep = {
     store: "/users",
     update: id("/users"),
     destroy: id("/users"),
+    resendAccount: (uid) => `/users/${uid}/resend-account`,
     resetRequests: "/password-reset-requests",
     resolveResetRequest: id("/password-reset-requests"),
   },

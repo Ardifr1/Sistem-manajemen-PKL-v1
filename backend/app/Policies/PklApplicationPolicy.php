@@ -46,6 +46,29 @@ class PklApplicationPolicy
         return $user->role === 'student';
     }
 
+    /**
+     * Penentuan pilihan final oleh siswa sendiri (memilih satu dari beberapa
+     * tawaran yang diterima).
+     */
+    public function choose(User $user, PklApplication $application): bool
+    {
+        return $user->role === 'student'
+            && (int) $application->student_id === (int) $user->id;
+    }
+
+    /**
+     * Persetujuan sekolah atas lamaran (accepted -> approved/rejected).
+     *
+     * Hard Block konflik kepentingan: Admin yang memiliki keanggotaan aktif
+     * pada perusahaan tujuan lamaran tidak boleh menyetujui/menolak lamaran
+     * tersebut dari sisi sekolah.
+     */
+    public function approve(User $user, PklApplication $application): bool
+    {
+        return $user->role === 'admin'
+            && ! $this->hasConflictOfInterest($user, $application->company_id);
+    }
+
     public function update(User $user, PklApplication $application): bool
     {
         if ($user->role === 'admin') {

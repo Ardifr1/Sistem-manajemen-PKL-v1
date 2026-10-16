@@ -8,6 +8,7 @@ use App\Models\Assessment;
 use App\Models\AssessmentComponent;
 use App\Models\Attendance;
 use App\Models\Company;
+use App\Models\CompanyMembership;
 use App\Models\CompanySupervisor;
 use App\Models\FinalAssessment;
 use App\Models\Journal;
@@ -52,6 +53,26 @@ trait ManagesPklTestData
         ]);
     }
 
+    /**
+     * Berikan keanggotaan perusahaan eksplisit (default aktif).
+     *
+     * @param  array<int, string>  $capabilities
+     */
+    protected function grantMembership(
+        User $user,
+        Company $company,
+        string $status = CompanyMembership::STATUS_ACTIVE,
+        array $capabilities = []
+    ): CompanyMembership {
+        return CompanyMembership::create([
+            'user_id' => $user->id,
+            'company_id' => $company->id,
+            'status' => $status,
+            'capabilities' => $capabilities,
+            'granted_at' => now(),
+        ]);
+    }
+
     protected function createPeriod(string $name = 'PKL Test 2026'): PklPeriod
     {
         return PklPeriod::create([
@@ -81,17 +102,29 @@ trait ManagesPklTestData
         User $student,
         Company $company,
         PklPeriod $period,
-        ?PklApplication $application = null
+        ?PklApplication $application = null,
+        ?User $teacher = null
     ): PklPlacement {
         return PklPlacement::create([
             'student_id' => $student->id,
             'company_id' => $company->id,
             'pkl_period_id' => $period->id,
+            'teacher_id' => $teacher?->id,
             'application_id' => $application?->id,
             'start_date' => $period->start_date,
             'end_date' => $period->end_date,
             'status' => 'active',
         ]);
+    }
+
+    /**
+     * Tugaskan guru pembimbing ke sebuah penempatan (teacher_id).
+     */
+    protected function assignTeacher(PklPlacement $placement, User $teacher): PklPlacement
+    {
+        $placement->update(['teacher_id' => $teacher->id]);
+
+        return $placement->refresh();
     }
 
     protected function createJournal(PklPlacement $placement): Journal
@@ -168,6 +201,9 @@ trait ManagesPklTestData
      */
     protected function scorePlacementFully(PklPlacement $placement, User $industryAssessor, User $teacherAssessor): void
     {
+        // Guru yang menilai adalah pembimbing resmi penempatan tersebut.
+        $placement->update(['teacher_id' => $teacherAssessor->id]);
+
         $components = $this->createDefaultComponents();
 
         $this->createAssessment($placement, $components['industri'], $industryAssessor, 80);

@@ -70,3 +70,34 @@ function crud(store, singular, plural) {
 export const { index, show, store, update, destroy } = crud(db, "Pengajuan PKL", "pengajuan PKL");
 export const documentsApi = crud(documents, "Dokumen pengajuan", "dokumen pengajuan");
 export const reviewsApi = crud(reviews, "Review pengajuan", "review pengajuan");
+
+/**
+ * Pilihan final siswa: satu tawaran dipilih, tawaran lain pada periode yang
+ * sama ditutup (status rejected) — meniru PklApplicationController::choose.
+ */
+export async function choose(id) {
+  await delay();
+  const row = db.find((r) => r.id === Number(id));
+  if (!row) throw Object.assign(new Error("Pengajuan tidak ditemukan."), { status: 404 });
+  if (row.status !== "accepted") {
+    throw Object.assign(
+      new Error("Hanya pengajuan yang sudah diterima perusahaan yang dapat dipilih sebagai tujuan PKL."),
+      { status: 422 }
+    );
+  }
+
+  let closed = 0;
+  for (const other of db) {
+    if (
+      other.id !== row.id &&
+      other.student_id === row.student_id &&
+      other.pkl_period_id === row.pkl_period_id &&
+      other.status === "accepted"
+    ) {
+      other.status = "rejected";
+      closed += 1;
+    }
+  }
+
+  return { ...ok("Pilihan final tersimpan.", row), closed_offers: closed };
+}

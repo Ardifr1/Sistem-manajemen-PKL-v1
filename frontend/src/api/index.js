@@ -28,6 +28,10 @@ import * as authMock from "./mock/auth.js";
 import * as authLive from "./live/auth.js";
 import * as companiesMock from "./mock/companies.js";
 import * as companiesLive from "./live/companies.js";
+import * as companyProposalsMock from "./mock/companyProposals.js";
+import * as companyProposalsLive from "./live/companyProposals.js";
+import * as companyMembershipsMock from "./mock/companyMemberships.js";
+import * as companyMembershipsLive from "./live/companyMemberships.js";
 import * as periodsMock from "./mock/periods.js";
 import * as periodsLive from "./live/periods.js";
 import * as applicationsMock from "./mock/applications.js";
@@ -78,6 +82,8 @@ export const schoolsApi = pick(schoolsMock, schoolsLive);
 
 // Sub-modul bernama (bentuk alternatif akses) — mengikuti flag yang sama.
 export const supervisorsApi = pick(companiesMock, companiesLive).supervisorsApi;
+export const companyProposalsApi = pick(companyProposalsMock, companyProposalsLive);
+export const companyMembershipsApi = pick(companyMembershipsMock, companyMembershipsLive);
 export const documentsApi = pick(applicationsMock, applicationsLive).documentsApi;
 export const reviewsApi = pick(applicationsMock, applicationsLive).reviewsApi;
 

@@ -122,6 +122,11 @@ class ApplicationReviewController extends Controller
 
         $application = PklApplication::findOrFail($validated['application_id']);
 
+        // Hard Block konflik kepentingan diperiksa di policy (butuh company_id
+        // dari lamaran): admin yang menjadi anggota aktif perusahaan tujuan
+        // tidak boleh mengambil keputusan atas nama perusahaan tersebut.
+        Gate::authorize('createForApplication', [ApplicationReview::class, (int) $application->company_id]);
+
         // Company hanya boleh mereview lamaran yang ditujukan ke perusahaannya.
         if (
             $request->user()->role === 'company'

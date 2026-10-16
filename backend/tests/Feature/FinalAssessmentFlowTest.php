@@ -79,6 +79,7 @@ class FinalAssessmentFlowTest extends TestCase
         $this->seedComponents([60, 30]); // total 90
 
         $teacher = $this->createUser('teacher', 'teacher_' . uniqid());
+        $this->assignTeacher($placement, $teacher);
         Sanctum::actingAs($teacher);
 
         $res = $this->postJson('/api/final-assessments/calculate', [
@@ -93,6 +94,7 @@ class FinalAssessmentFlowTest extends TestCase
         [$c1, $c2] = $this->seedComponents([60, 40]);
 
         $teacher = $this->createUser('teacher', 'teacher_' . uniqid());
+        $this->assignTeacher($placement, $teacher);
         // hanya komponen guru yang dinilai
         \App\Models\Assessment::create([
             'placement_id' => $placement->id,
@@ -116,6 +118,7 @@ class FinalAssessmentFlowTest extends TestCase
 
         $supervisor = $this->createUser('supervisor', 'sup_' . uniqid());
         $teacher = $this->createUser('teacher', 'tch_' . uniqid());
+        $this->assignTeacher($placement, $teacher);
 
         // supervisor: skala 1-5 -> 80 ; guru: 0-100 -> 90
         \App\Models\Assessment::create([
@@ -211,7 +214,9 @@ class FinalAssessmentFlowTest extends TestCase
 
         // setelah unpublish, siswa tidak bisa lihat lagi
         Sanctum::actingAs($admin);
-        $this->postJson("/api/final-assessments/{$fa->id}/unpublish")->assertOk();
+        $this->postJson("/api/final-assessments/{$fa->id}/unpublish", [
+            'reason' => 'Revisi nilai sebelum ditampilkan ulang.',
+        ])->assertOk();
 
         Sanctum::actingAs($student);
         $this->getJson("/api/final-assessments/{$fa->id}")->assertForbidden();
@@ -223,6 +228,7 @@ class FinalAssessmentFlowTest extends TestCase
         $admin = $this->createUser('admin', 'admin_' . uniqid());
         $teacher = $this->createUser('teacher', 'teacher_' . uniqid());
         $fa = $this->createFinalAssessment($placement, $admin);
+        $this->assignTeacher($placement, $teacher);
 
         Sanctum::actingAs($admin);
         $this->postJson("/api/final-assessments/{$fa->id}/publish")->assertOk();

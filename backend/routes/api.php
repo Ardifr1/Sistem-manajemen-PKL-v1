@@ -5,12 +5,14 @@ use App\Http\Controllers\Admin\AssessmentComponentController;
 use App\Http\Controllers\Admin\PklPeriodController;
 use App\Http\Controllers\Admin\PklPlacementController;
 use App\Http\Controllers\Admin\SchoolController;
+use App\Http\Controllers\Admin\CompanyMembershipController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Company\ApplicationReviewController;
 use App\Http\Controllers\Company\CompanyController;
 use App\Http\Controllers\Company\CompanySupervisorController;
 use App\Http\Controllers\Company\InterviewController;
 use App\Http\Controllers\Student\ApplicationDocumentController;
+use App\Http\Controllers\Student\CompanyProposalController;
 use App\Http\Controllers\Student\AttendanceController;
 use App\Http\Controllers\Student\JournalController;
 use App\Http\Controllers\Student\JournalRecommendationController;
@@ -26,6 +28,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
+Route::post('/set-password', [AuthController::class, 'setPassword']);
 
 Route::middleware('auth:sanctum')->group(function () {
 
@@ -35,11 +38,25 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('companies', CompanyController::class);
     Route::apiResource('company-supervisors', CompanySupervisorController::class);
 
+    // Company Membership: keanggotaan perusahaan eksplisit + kapabilitas.
+    // Pemberian/pencabutan akses hanya oleh admin (dijaga di policy).
+    Route::apiResource('company-memberships', CompanyMembershipController::class);
+
+    // Pengajuan perusahaan NONMITRA oleh siswa + verifikasi Admin Sekolah.
+    // Disetujui -> perusahaan menjadi mitra dan diproses via alur pengajuan
+    // pkl-applications yang sudah ada (tidak ada alur paralel).
+    Route::get('company-proposals', [CompanyProposalController::class, 'index']);
+    Route::post('company-proposals', [CompanyProposalController::class, 'store']);
+    Route::get('company-proposals/{company}', [CompanyProposalController::class, 'show']);
+    Route::patch('company-proposals/{company}/verify', [CompanyProposalController::class, 'verify']);
+
     // PKL Period
     Route::apiResource('pkl-periods', PklPeriodController::class);
 
     // PKL Application
     Route::apiResource('pkl-applications', PklApplicationController::class);
+    // Pilihan final siswa (bila diterima beberapa perusahaan, pilih satu).
+    Route::post('/pkl-applications/{pklApplication}/choose', [PklApplicationController::class, 'choose']);
     Route::apiResource('application-documents', ApplicationDocumentController::class);
     Route::get('application-documents/{applicationDocument}/download', [ApplicationDocumentController::class, 'download']);
     Route::apiResource('application-reviews', ApplicationReviewController::class);
@@ -90,6 +107,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // User
     Route::middleware('role:admin,company,supervisor,teacher')->group(function () {
     Route::apiResource('users', UserController::class);
+    Route::post('/users/{user}/resend-account', [UserController::class, 'resendAccountInfo']);
     Route::get('/password-reset-requests', [UserController::class, 'resetRequests']);
     Route::patch('/password-reset-requests/{resetRequest}', [UserController::class, 'resolveResetRequest']);
 });

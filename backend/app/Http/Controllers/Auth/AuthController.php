@@ -62,6 +62,46 @@ class AuthController extends Controller
     }
 
     /**
+     * Mengatur password awal lewat tautan aktivasi (email/WhatsApp).
+     * Token bersifat sekali pakai dan disimpan sebagai hash.
+     */
+    public function setPassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email'],
+            'token' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $user = User::where('email', $validated['email'])->first();
+        $hashedToken = hash('sha256', $validated['token']);
+
+        if (
+            ! $user
+            || ! $user->password_setup_token
+            || ! hash_equals($user->password_setup_token, $hashedToken)
+            || ! $user->password_setup_expires_at
+            || $user->password_setup_expires_at->isPast()
+        ) {
+            return response()->json([
+                'message' => 'Tautan aktivasi tidak valid atau sudah kadaluarsa.',
+            ], 422);
+        }
+
+        // Cast 'hashed' pada model akan meng-hash password.
+        $user->update([
+            'password' => $validated['password'],
+            'password_setup_token' => null,
+            'password_setup_expires_at' => null,
+            'is_active' => true,
+        ]);
+
+        return response()->json([
+            'message' => 'Password berhasil diatur. Silakan masuk menggunakan email Anda.',
+        ]);
+    }
+
+    /**
      * Permintaan reset password — publik. Admin menindaklanjuti
      * lewat halaman Pengguna (reset manual).
      */

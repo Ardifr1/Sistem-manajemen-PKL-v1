@@ -1,11 +1,83 @@
 import { useEffect, useState } from "react";
-import { companiesApi, placementsApi, usersApi } from "../../api/index.js";
+import {
+  companiesApi,
+  placementsApi,
+  usersApi,
+  companyProposalsApi,
+  companyMembershipsApi,
+} from "../../api/index.js";
 import { SkelCards } from "../../components/role/skeleton.jsx";
 import "./admin-pages.css";
+
+// Kapabilitas keanggotaan perusahaan (PRD bagian C) — sama dengan backend.
+const CAPABILITIES = [
+  { value: "company_admin", label: "Admin Perusahaan" },
+  { value: "review_applications", label: "Meninjau Pengajuan" },
+  { value: "verify_journals", label: "Verifikasi Jurnal" },
+];
+
+function MembershipForm({ companyId, accounts, busy, onSave }) {
+  const [userId, setUserId] = useState("");
+  const [capabilities, setCapabilities] = useState(["company_admin"]);
+  const [error, setError] = useState("");
+
+  const toggle = (cap) =>
+    setCapabilities((prev) => (prev.includes(cap) ? prev.filter((x) => x !== cap) : [...prev, cap]));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!userId) {
+      setError("Pilih pengguna terlebih dahulu.");
+      return;
+    }
+    setError("");
+    await onSave(companyId, { user_id: Number(userId), capabilities });
+    setUserId("");
+  };
+
+  return (
+    <form className="zip-form" onSubmit={submit} style={{ marginTop: 12 }}>
+      {error && <div className="zip-error">{error}</div>}
+      <label className="zip-field">
+        <span>Pengguna</span>
+        <select value={userId} onChange={(e) => setUserId(e.target.value)}>
+          <option value="">— Pilih akun (perusahaan/pembimbing/sekolah) —</option>
+          {accounts.map((u) => (
+            <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+          ))}
+        </select>
+      </label>
+      <div className="zip-field">
+        <span>Kapabilitas</span>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", paddingTop: 4 }}>
+          {CAPABILITIES.map((cap) => (
+            <label key={cap.value} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={capabilities.includes(cap.value)}
+                onChange={() => toggle(cap.value)}
+              />
+              {cap.label}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="zip-form-actions">
+        <button type="submit" className="zip-btn zip-btn-primary" disabled={busy}>
+          {busy ? "Menyimpan…" : "Beri Akses"}
+        </button>
+      </div>
+    </form>
+  );
+}
 
 function CompanyForm({ initial, onCancel, onSaved }) {
   const [form, setForm] = useState({
     name: initial?.name || "",
+    // `industry` dan `student_quota` WAJIB dikirim saat membuat perusahaan
+    // (divalidasi backend); perusahaan tetap boleh memperbaruinya sendiri.
+    industry: initial?.industry || "",
+    student_quota: initial?.student_quota ?? 0,
     is_active: initial ? !!initial.is_active : true,
   });
   const [saving, setSaving] = useState(false);
@@ -20,10 +92,20 @@ function CompanyForm({ initial, onCancel, onSaved }) {
       setError("Nama perusahaan wajib diisi.");
       return;
     }
+    if (!String(form.industry).trim()) {
+      setError("Bidang usaha wajib diisi.");
+      return;
+    }
+    if (Number(form.student_quota) < 0 || Number.isNaN(Number(form.student_quota))) {
+      setError("Kuota siswa harus berupa angka 0 atau lebih.");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
         name: form.name.trim(),
+        industry: String(form.industry).trim(),
+        student_quota: Number(form.student_quota) || 0,
         is_active: form.is_active,
       };
       if (initial?.id) await companiesApi.update(initial.id, payload);
@@ -43,9 +125,22 @@ function CompanyForm({ initial, onCancel, onSaved }) {
         <span>Nama Perusahaan</span>
         <input value={form.name} onChange={set("name")} placeholder="cth PT Solusi Digital" />
       </label>
+      <label className="zip-field">
+        <span>Bidang Usaha</span>
+        <input value={form.industry} onChange={set("industry")} placeholder="cth Teknologi Informasi" />
+      </label>
+      <label className="zip-field">
+        <span>Kuota Siswa</span>
+        <input
+          type="number"
+          min="0"
+          value={form.student_quota}
+          onChange={(e) => setForm((f) => ({ ...f, student_quota: e.target.value }))}
+        />
+      </label>
       <div className="zip-info-box" style={{ marginBottom: 4 }}>
         <i className="fa-solid fa-circle-info"></i>
-        <span>Bidang & kuota diatur sendiri oleh perusahaan lewat menu Profil Perusahaan.</span>
+        <span>Nilai awal ini dapat diperbarui sendiri oleh perusahaan lewat menu Profil Perusahaan.</span>
       </div>
       <label className="zip-field">
         <span>Status</span>
@@ -74,22 +169,76 @@ function PerusahaanPartner({ onMeta }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState({ name: "list" });
   const [error, setError] = useState("");
+  // Pengajuan perusahaan nonmitra + keanggotaan perusahaan (PRD bagian C & D).
+  const [proposals, setProposals] = useState([]);
+  const [memberships, setMemberships] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [rejecting, setRejecting] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   const load = async () => {
     setLoading(true);
     try {
-      const [cRes, pRes, sRes] = await Promise.all([
+      const [cRes, pRes, sRes, prRes, mRes, uRes] = await Promise.all([
         companiesApi.index().catch(() => ({ data: [] })),
         placementsApi.index().catch(() => ({ data: [] })),
         usersApi.index({ role: "student" }).catch(() => ({ data: [] })),
+        companyProposalsApi.index().catch(() => ({ data: [] })),
+        companyMembershipsApi.index().catch(() => ({ data: [] })),
+        usersApi.index().catch(() => ({ data: [] })),
       ]);
       setRows(Array.isArray(cRes.data) ? cRes.data : []);
       setPlacements(Array.isArray(pRes.data) ? pRes.data : []);
       setStudents(Array.isArray(sRes.data) ? sRes.data : []);
+      setProposals(Array.isArray(prRes.data) ? prRes.data : []);
+      setMemberships(Array.isArray(mRes.data) ? mRes.data : []);
+      setAccounts(Array.isArray(uRes.data) ? uRes.data : []);
     } catch (err) {
       setError(err?.message || "Gagal memuat perusahaan.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const verifyProposal = async (company, action, reason) => {
+    setBusy(true);
+    setError("");
+    try {
+      await companyProposalsApi.verify(company.id, { action, reason });
+      setRejecting(null);
+      setRejectReason("");
+      await load();
+    } catch (err) {
+      setError(err?.message || "Gagal memverifikasi pengajuan perusahaan.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveMembership = async (companyId, payload) => {
+    setBusy(true);
+    setError("");
+    try {
+      await companyMembershipsApi.store({ company_id: companyId, ...payload });
+      await load();
+    } catch (err) {
+      setError(err?.message || "Gagal menyimpan keanggotaan perusahaan.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setMembershipStatus = async (id, status) => {
+    setBusy(true);
+    setError("");
+    try {
+      await companyMembershipsApi.update(id, { status });
+      await load();
+    } catch (err) {
+      setError(err?.message || "Gagal memperbarui keanggotaan perusahaan.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -144,7 +293,11 @@ function PerusahaanPartner({ onMeta }) {
   }
 
   const studentById = Object.fromEntries(students.map((st) => [st.id, st]));
+  const accountById = Object.fromEntries(accounts.map((u) => [u.id, u]));
   const terisiOf = (cid) => placements.filter((pl) => String(pl.company_id) === String(cid)).length;
+  const pendingProposals = proposals.filter(
+    (p) => p.verification_status === "pending_school_verification"
+  );
 
   if (view.name === "detail") {
     const c = view.row;
@@ -175,6 +328,41 @@ function PerusahaanPartner({ onMeta }) {
             <div className="zip-muted">{terisi}/{kuota} siswa ({pct}%)</div>
           </div>
         </div>
+        <div className="zip-card">
+          <h4 className="zip-card-title">Keanggotaan Perusahaan</h4>
+          <div className="zip-muted" style={{ marginBottom: 8 }}>
+            Keanggotaan aktif memberi kewenangan sisi industri beserta kapabilitasnya.
+            Keanggotaan nonaktif tidak memberi akses apa pun.
+          </div>
+          <div className="zip-list">
+            {memberships
+              .filter((m) => String(m.company_id) === String(c.id))
+              .map((m) => (
+                <div className="zip-row" key={m.id}>
+                  <span className="zip-row-text" style={{ flex: 1 }}>
+                    <strong>{accountById[m.user_id]?.name || `Pengguna #${m.user_id}`}</strong>
+                    <div className="zip-muted">
+                      {m.status === "active" ? "Aktif" : "Nonaktif"} •{" "}
+                      {(m.capabilities || []).join(", ") || "tanpa kapabilitas"}
+                    </div>
+                  </span>
+                  <button
+                    type="button"
+                    className="zip-act zip-act-edit"
+                    disabled={busy}
+                    onClick={() => setMembershipStatus(m.id, m.status === "active" ? "inactive" : "active")}
+                  >
+                    {m.status === "active" ? "Nonaktifkan" : "Aktifkan"}
+                  </button>
+                </div>
+              ))}
+          </div>
+          {memberships.filter((m) => String(m.company_id) === String(c.id)).length === 0 && (
+            <div className="zip-muted">Belum ada keanggotaan untuk perusahaan ini.</div>
+          )}
+          <MembershipForm companyId={c.id} accounts={accounts} busy={busy} onSave={saveMembership} />
+        </div>
+
         <div className="zip-card">
           <h4 className="zip-card-title">Siswa Diterima ({siswaDiSini.length})</h4>
           <div className="zip-list">
@@ -208,6 +396,69 @@ function PerusahaanPartner({ onMeta }) {
         </button>
       </div>
       {error && <div className="zip-error">{error}</div>}
+      {pendingProposals.length > 0 && (
+        <div className="zip-card">
+          <h4 className="zip-card-title">
+            Pengajuan Perusahaan Nonmitra ({pendingProposals.length})
+          </h4>
+          <div className="zip-list">
+            {pendingProposals.map((p) => (
+              <div className="zip-row" key={p.id} style={{ flexWrap: "wrap", gap: 8 }}>
+                <span className="zip-row-text" style={{ flex: 1 }}>
+                  <strong>{p.name}</strong> • {p.industry || "-"}
+                  <div className="zip-muted">
+                    {p.address || "-"} • {p.contact_person || "-"} • {p.phone || "-"} • {p.email || "-"}
+                  </div>
+                  <div className="zip-muted">
+                    Menunggu verifikasi sekolah
+                    {p.submitted_by ? ` • diajukan oleh pengguna #${p.submitted_by}` : ""}
+                  </div>
+                </span>
+                <span style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    className="zip-btn zip-btn-primary"
+                    disabled={busy}
+                    onClick={() => verifyProposal(p, "approve")}
+                  >
+                    Setujui
+                  </button>
+                  <button
+                    type="button"
+                    className="zip-btn zip-btn-outline"
+                    disabled={busy}
+                    onClick={() => {
+                      setRejecting(p.id);
+                      setRejectReason("");
+                    }}
+                  >
+                    Tolak
+                  </button>
+                </span>
+                {rejecting === p.id && (
+                  <div style={{ flexBasis: "100%", display: "flex", gap: 8, marginTop: 8 }}>
+                    <input
+                      className="zip-field"
+                      style={{ flex: 1 }}
+                      placeholder="Alasan penolakan (wajib)"
+                      value={rejectReason}
+                      onChange={(e) => setRejectReason(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="zip-btn zip-btn-primary"
+                      disabled={busy}
+                      onClick={() => verifyProposal(p, "reject", rejectReason)}
+                    >
+                      Kirim Penolakan
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {loading ? (
         <SkelCards n={3} />
       ) : (

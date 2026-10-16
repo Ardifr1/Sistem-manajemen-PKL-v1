@@ -14,16 +14,19 @@ class AssessmentComponentSeeder extends Seeder
      */
     public function run(): void
     {
+        // owner_type dan assessor_role adalah dua nama untuk hal yang sama;
+        // keduanya diisi eksplisit agar konsisten walau model events dimatikan
+        // (DatabaseSeeder memakai WithoutModelEvents).
         $components = [
-            // Industri: total 70
-            ['name' => 'Kedisiplinan', 'description' => 'Ketepatan waktu dan kepatuhan pada aturan kerja.', 'owner_type' => 'industri', 'weight' => 15],
-            ['name' => 'Sikap Kerja', 'description' => 'Etika, kesopanan, dan tanggung jawab dalam bekerja.', 'owner_type' => 'industri', 'weight' => 15],
-            ['name' => 'Komunikasi', 'description' => 'Kemampuan berkomunikasi dan bekerja dengan tim.', 'owner_type' => 'industri', 'weight' => 10],
-            ['name' => 'Kemampuan Kerja', 'description' => 'Kemampuan mengerjakan tugas sesuai bidang PKL.', 'owner_type' => 'industri', 'weight' => 20],
-            ['name' => 'Perkembangan Kompetensi', 'description' => 'Peningkatan kemampuan dari waktu ke waktu.', 'owner_type' => 'industri', 'weight' => 10],
-            // Guru: total 30
-            ['name' => 'Laporan & Jurnal', 'description' => 'Kelengkapan dan kualitas laporan serta jurnal PKL.', 'owner_type' => 'guru', 'weight' => 15],
-            ['name' => 'Presentasi & Pemahaman', 'description' => 'Pemahaman materi dan kemampuan presentasi hasil PKL.', 'owner_type' => 'guru', 'weight' => 15],
+            // Industri (Pembimbing Industri): total 70
+            ['name' => 'Kedisiplinan', 'description' => 'Ketepatan waktu dan kepatuhan pada aturan kerja.', 'owner_type' => 'industri', 'assessor_role' => 'supervisor', 'weight' => 15],
+            ['name' => 'Sikap Kerja', 'description' => 'Etika, kesopanan, dan tanggung jawab dalam bekerja.', 'owner_type' => 'industri', 'assessor_role' => 'supervisor', 'weight' => 15],
+            ['name' => 'Komunikasi', 'description' => 'Kemampuan berkomunikasi dan bekerja dengan tim.', 'owner_type' => 'industri', 'assessor_role' => 'supervisor', 'weight' => 10],
+            ['name' => 'Kemampuan Kerja', 'description' => 'Kemampuan mengerjakan tugas sesuai bidang PKL.', 'owner_type' => 'industri', 'assessor_role' => 'supervisor', 'weight' => 20],
+            ['name' => 'Perkembangan Kompetensi', 'description' => 'Peningkatan kemampuan dari waktu ke waktu.', 'owner_type' => 'industri', 'assessor_role' => 'supervisor', 'weight' => 10],
+            // Guru (Guru Pembimbing): total 30
+            ['name' => 'Laporan & Jurnal', 'description' => 'Kelengkapan dan kualitas laporan serta jurnal PKL.', 'owner_type' => 'guru', 'assessor_role' => 'teacher', 'weight' => 15],
+            ['name' => 'Presentasi & Pemahaman', 'description' => 'Pemahaman materi dan kemampuan presentasi hasil PKL.', 'owner_type' => 'guru', 'assessor_role' => 'teacher', 'weight' => 15],
         ];
 
         foreach ($components as $component) {

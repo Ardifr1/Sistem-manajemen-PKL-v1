@@ -21,6 +21,7 @@ class ProgressRecordPolicyTest extends TestCase
         $placement = $this->createPlacement($student, $company, $period);
 
         $teacher = $this->createUser('teacher', 'teacher_a');
+        $this->assignTeacher($placement, $teacher);
 
         Sanctum::actingAs($teacher);
 

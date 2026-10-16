@@ -49,6 +49,16 @@ export async function forgotPassword(username) {
   return { message: "Permintaan terkirim. Hubungi admin sekolah untuk mendapatkan password baru.", data: null };
 }
 
+export async function setPassword({ email, token, password } = {}) {
+  await delay();
+  if (!email || !token || !password) {
+    const err = new Error("Tautan aktivasi tidak valid atau sudah kadaluarsa.");
+    err.status = 422;
+    throw err;
+  }
+  return ok("Password berhasil diatur. Silakan masuk.", null);
+}
+
 export function currentUser() {
   try {
     return JSON.parse(localStorage.getItem("simagang_user") || "null");

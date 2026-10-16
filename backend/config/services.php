@@ -35,4 +35,19 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | WhatsApp Gateway (Fonnte)
+    |--------------------------------------------------------------------------
+    |
+    | Kredensial TIDAK boleh di-hardcode. Isi lewat environment:
+    | FONNTE_TOKEN dan (opsional) FONNTE_URL.
+    |
+    */
+
+    'fonnte' => [
+        'token' => env('FONNTE_TOKEN'),
+        'url' => env('FONNTE_URL', 'https://api.fonnte.com/send'),
+    ],
+
 ];

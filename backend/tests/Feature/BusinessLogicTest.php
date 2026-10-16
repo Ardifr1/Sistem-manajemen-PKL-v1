@@ -99,6 +99,64 @@ class BusinessLogicTest extends TestCase
         );
     }
 
+    public function test_student_can_choose_one_offer_and_other_offers_are_closed(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $period = $this->createPeriod();
+        $companyA = $this->createCompany('PT A');
+        $companyB = $this->createCompany('PT B');
+
+        $applicationA = $this->makeApplicationFor($student, $companyA, $period, 1);
+        $applicationA->update(['status' => 'accepted']);
+        $applicationB = $this->makeApplicationFor($student, $companyB, $period, 2);
+        $applicationB->update(['status' => 'accepted']);
+
+        Sanctum::actingAs($student);
+
+        $this->postJson("/api/pkl-applications/{$applicationA->id}/choose")
+            ->assertOk()
+            ->assertJsonPath('closed_offers', 1);
+
+        $this->assertDatabaseHas('pkl_applications', [
+            'id' => $applicationA->id,
+            'status' => 'accepted',
+        ]);
+        $this->assertDatabaseHas('pkl_applications', [
+            'id' => $applicationB->id,
+            'status' => 'rejected',
+        ]);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'application_offers_closed']);
+    }
+
+    public function test_student_cannot_choose_application_of_another_student(): void
+    {
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+
+        $applicationB = $this->makeApplicationFor($studentB, $company, $period);
+        $applicationB->update(['status' => 'accepted']);
+
+        Sanctum::actingAs($studentA);
+
+        $this->postJson("/api/pkl-applications/{$applicationB->id}/choose")
+            ->assertForbidden();
+    }
+
+    public function test_student_cannot_choose_application_not_yet_accepted(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $application = $this->makeApplicationFor($student, $company, $period);
+
+        Sanctum::actingAs($student);
+
+        $this->postJson("/api/pkl-applications/{$application->id}/choose")
+            ->assertStatus(422);
+    }
+
     // ===================== REVIEW =====================
 
     public function test_company_review_updates_application_status(): void

@@ -149,20 +149,21 @@ class AssessmentController extends Controller
             ], 403);
         }
 
-        // Pembimbing Industri (role supervisor) hanya boleh menilai siswa
-        // yang ditugaskan kepadanya.
+        // Hard Block konflik kepentingan (sisi sekolah): Guru Pembimbing yang
+        // memiliki keanggotaan aktif pada perusahaan penempatan tidak boleh
+        // mengisi penilaian sisi sekolah untuk siswa perusahaan tersebut.
+        if ($user->role === 'teacher') {
+            Gate::authorize('createForPlacement', [Assessment::class, $placement]);
+        }
+
+        // BR-09a: Pembimbing Industri (role supervisor) hanya boleh menilai
+        // siswa yang secara spesifik ditugaskan kepadanya (placement.supervisor_id).
         if ($user->role === 'supervisor') {
             $supervisor = $user->companySupervisor;
 
-            if (! $supervisor) {
-                abort(403);
-            }
-
-            if ($placement->supervisor_id !== null) {
-                if ((int) $placement->supervisor_id !== (int) $supervisor->id) {
-                    abort(403);
-                }
-            } elseif ((int) $placement->company_id !== (int) $supervisor->company_id) {
+            if (! $supervisor
+                || $placement->supervisor_id === null
+                || (int) $placement->supervisor_id !== (int) $supervisor->id) {
                 abort(403);
             }
         } elseif (! Gate::forUser($user)->check('view', $placement)) {

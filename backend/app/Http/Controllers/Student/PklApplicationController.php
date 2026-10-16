@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\PklApplication;
 use App\Models\PklPeriod;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class PklApplicationController extends Controller
@@ -177,6 +179,63 @@ class PklApplicationController extends Controller
         ], 201);
     }
 
+    /**
+     * Pilihan final siswa: bila diterima beberapa perusahaan, siswa memilih
+     * SATU tujuan PKL. Tawaran lain pada periode yang sama ditutup (rejected)
+     * agar siswa hanya berada pada satu perusahaan dan kuota perusahaan lain
+     * terbebas kembali.
+     */
+    public function choose(
+        Request $request,
+        PklApplication $pklApplication
+    ): JsonResponse {
+        Gate::authorize('choose', $pklApplication);
+
+        if ($pklApplication->status !== 'accepted') {
+            return response()->json([
+                'message' => 'Hanya pengajuan yang sudah diterima perusahaan yang dapat dipilih sebagai tujuan PKL.',
+            ], 422);
+        }
+
+        $closedOffers = DB::transaction(function () use ($pklApplication, $request) {
+            $closedOffers = PklApplication::query()
+                ->where('student_id', $pklApplication->student_id)
+                ->where('pkl_period_id', $pklApplication->pkl_period_id)
+                ->where('status', 'accepted')
+                ->where('id', '!=', $pklApplication->id)
+                ->update(['status' => 'rejected']);
+
+            if ($closedOffers > 0) {
+                AuditLog::create([
+                    'user_id' => $request->user()->id,
+                    'action' => 'application_offers_closed',
+                    'subject_type' => PklApplication::class,
+                    'subject_id' => $pklApplication->id,
+                    'new_status' => 'rejected',
+                    'reason' => 'Siswa memilih satu perusahaan; tawaran lain ditutup.',
+                    'metadata' => [
+                        'student_id' => (int) $pklApplication->student_id,
+                        'pkl_period_id' => (int) $pklApplication->pkl_period_id,
+                        'chosen_application_id' => (int) $pklApplication->id,
+                        'closed_count' => $closedOffers,
+                    ],
+                ]);
+            }
+
+            return $closedOffers;
+        });
+
+        $pklApplication->load(['company', 'pklPeriod']);
+
+        return response()->json([
+            'message' => $closedOffers > 0
+                ? 'Pilihan final tersimpan. Tawaran lain ditutup dan pengajuan menunggu proses penempatan sekolah.'
+                : 'Pilihan final tersimpan. Pengajuan menunggu proses penempatan sekolah.',
+            'data' => $pklApplication,
+            'closed_offers' => $closedOffers,
+        ]);
+    }
+
     public function update(
         Request $request,
         PklApplication $pklApplication
@@ -185,12 +244,11 @@ class PklApplicationController extends Controller
 
         // Persetujuan sekolah: admin dapat mengubah status lamaran yang sudah
         // diterima perusahaan (accepted) menjadi approved (resmi) / rejected.
+        // Hanya admin (dan bukan admin yang berkonflik kepentingan dengan
+        // perusahaan tujuan) yang boleh melakukannya — diperiksa di policy.
         if ($request->has('status')) {
-            if ($request->user()->role !== 'admin') {
-                return response()->json([
-                    'message' => 'Hanya admin yang dapat mengubah status persetujuan.',
-                ], 403);
-            }
+            Gate::authorize('approve', $pklApplication);
+
             if ($pklApplication->status !== 'accepted') {
                 return response()->json([
                     'message' => 'Hanya lamaran berstatus diterima perusahaan yang dapat disetujui/ditolak sekolah.',

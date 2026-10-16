@@ -43,6 +43,17 @@ export async function forgotPassword(username) {
   return res;
 }
 
+/** Mengatur password awal lewat tautan aktivasi (email + token). */
+export async function setPassword({ email, token, password, passwordConfirmation } = {}) {
+  const res = await client.post(ep.auth.setPassword, {
+    email,
+    token,
+    password,
+    password_confirmation: passwordConfirmation,
+  });
+  return res;
+}
+
 export function currentUser() {
   try {
     return JSON.parse(localStorage.getItem(USER_KEY) || "null");

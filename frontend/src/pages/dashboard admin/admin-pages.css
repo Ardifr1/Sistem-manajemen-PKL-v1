@@ -103,6 +103,16 @@ label.f-label{font-size:11px;font-weight:700;color:var(--text);display:block;mar
 .zip-stat-hint{font-size:12px;color:#64748b}
 .zip-card{background:#fff;border:1px solid #eef2f7;border-radius:12px;padding:20px;max-width:720px}
 .zip-error{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:13px;border-radius:10px;padding:10px 12px;margin-bottom:4px}
+.zip-hint{font-size:12px;color:#64748b;line-height:1.45}
+.zip-delivery{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px}
+.zip-delivery>strong{font-size:13px;color:#0f172a}
+.zip-delivery-row{display:grid;grid-template-columns:80px 150px 1fr;gap:10px;align-items:center;font-size:12.5px;color:#334155}
+.zip-delivery-channel{font-weight:700;color:#0f172a}
+.zip-delivery-state{display:inline-flex;align-items:center;gap:6px;font-weight:700}
+.zip-delivery-state.is-sent{color:#15803d}
+.zip-delivery-state.is-failed{color:#b91c1c}
+.zip-delivery-state.is-not_configured{color:#b45309}
+@media (max-width:640px){.zip-delivery-row{grid-template-columns:1fr;gap:2px}}
 .zip-field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
 .zip-field>span{font-size:13px;font-weight:700;color:#0f172a}
 .zip-field input,.zip-field select{border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:13px;color:#0f172a;background:#fff;width:100%}

@@ -6,6 +6,7 @@ import PerusahaanDashboard from "./pages/dashboard perusahaan/dashboard-perusaha
 import SiswaDashboard from "./pages/dashboard siswa/dashboard-siswa.jsx";
 import Login from "./pages/auth/login.jsx";
 import LupaPassword from "./pages/auth/lupa-password.jsx";
+import Aktivasi from "./pages/auth/aktivasi.jsx";
 import { authApi } from "./api/index.js";
 
 const TOKEN_KEY = "simagang_token";
@@ -76,6 +77,14 @@ function App() {
           element={
             <GuestRoute>
               <LupaPassword />
+            </GuestRoute>
+          }
+        />
+        <Route
+          path="/aktivasi"
+          element={
+            <GuestRoute>
+              <Aktivasi />
             </GuestRoute>
           }
         />

@@ -17,20 +17,29 @@ class FinalAssessmentPolicy
 
     public function view(User $user, FinalAssessment $finalAssessment): bool
     {
-        if (in_array($user->role, ['admin', 'teacher'], true)) {
+        if ($user->role === 'admin') {
             return true;
+        }
+
+        $placement = $finalAssessment->placement;
+
+        // Guru Pembimbing hanya untuk siswa bimbingannya (teacher_id).
+        if ($user->role === 'teacher') {
+            return $placement !== null
+                && $placement->teacher_id !== null
+                && (int) $placement->teacher_id === (int) $user->id;
         }
 
         // Siswa hanya boleh melihat nilai akhir miliknya yang sudah dipublikasikan.
         if ($user->role === 'student') {
             return $finalAssessment->status === 'published'
-                && $finalAssessment->placement
-                && $finalAssessment->placement->student_id === $user->id;
+                && $placement !== null
+                && (int) $placement->student_id === (int) $user->id;
         }
 
         if ($user->role === 'company') {
-            return $finalAssessment->placement
-                && $this->isAuthorizedForCompany($user, $finalAssessment->placement->company_id);
+            return $placement !== null
+                && $this->isAuthorizedForCompany($user, $placement->company_id);
         }
 
         return false;
@@ -43,24 +52,50 @@ class FinalAssessmentPolicy
 
     public function update(User $user, FinalAssessment $finalAssessment): bool
     {
-        return in_array($user->role, ['teacher', 'admin'], true);
+        if ($user->role === 'admin') {
+            return true;
+        }
+
+        return $user->role === 'teacher' && $this->teaches($user, $finalAssessment);
     }
 
     public function delete(User $user, FinalAssessment $finalAssessment): bool
     {
-        return in_array($user->role, ['teacher', 'admin'], true);
+        if ($user->role === 'admin') {
+            return true;
+        }
+
+        return $user->role === 'teacher' && $this->teaches($user, $finalAssessment);
+    }
+
+    /**
+     * Apakah guru ini pembimbing resmi (placement.teacher_id) atas nilai tsb.
+     */
+    private function teaches(User $user, FinalAssessment $finalAssessment): bool
+    {
+        $placement = $finalAssessment->placement;
+
+        return $placement !== null
+            && $placement->teacher_id !== null
+            && (int) $placement->teacher_id === (int) $user->id;
     }
 
     /**
      * Publikasi dan pembatalan publikasi hanya boleh dilakukan Admin.
+     *
+     * Hard Block konflik kepentingan: Admin yang memiliki keanggotaan aktif
+     * pada perusahaan penempatan tidak boleh menetapkan (memublikasikan)
+     * nilai siswa perusahaan tersebut dari sisi sekolah.
      */
-    public function publish(User $user): bool
+    public function publish(User $user, FinalAssessment $finalAssessment): bool
     {
-        return $user->role === 'admin';
+        return $user->role === 'admin'
+            && ! $this->hasConflictOfInterest($user, $finalAssessment->placement?->company_id);
     }
 
     public function unpublish(User $user, FinalAssessment $finalAssessment): bool
     {
-        return $user->role === 'admin';
+        return $user->role === 'admin'
+            && ! $this->hasConflictOfInterest($user, $finalAssessment->placement?->company_id);
     }
 }

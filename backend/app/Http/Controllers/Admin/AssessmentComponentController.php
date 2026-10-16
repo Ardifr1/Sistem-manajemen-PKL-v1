@@ -52,7 +52,7 @@ class AssessmentComponentController extends Controller
                 'string',
             ],
             'owner_type' => [
-                'sometimes',
+                'required_without:assessor_role',
                 'string',
                 'in:industri,guru',
             ],
@@ -62,8 +62,10 @@ class AssessmentComponentController extends Controller
                 'min:0',
                 'max:100',
             ],
+            // assessor_role adalah nama baru dari owner_type; cukup salah satu.
+            // AssessmentComponent menyelaraskan keduanya saat disimpan.
             'assessor_role' => [
-                'required',
+                'required_without:owner_type',
                 'string',
                 Rule::in(['teacher', 'supervisor']),
             ],

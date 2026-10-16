@@ -5,6 +5,10 @@ import { liveCrud } from "./_shared.js";
 
 export const { index, show, store, update, destroy } = liveCrud(ep.users);
 
+export async function resendAccount(id) {
+  return client.post(ep.users.resendAccount(id));
+}
+
 export async function resetRequests() {
   return client.get(ep.users.resetRequests);
 }

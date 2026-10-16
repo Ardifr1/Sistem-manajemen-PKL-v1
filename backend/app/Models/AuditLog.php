@@ -10,12 +10,24 @@ class AuditLog extends Model
     protected $fillable = [
         'user_id',
         'action',
+        // Subjek generik: dipakai untuk peristiwa di luar penempatan/penilaian
+        // akhir (mis. perubahan keanggotaan perusahaan, verifikasi perusahaan).
+        'subject_type',
+        'subject_id',
         'placement_id',
         'final_assessment_id',
         'old_status',
         'new_status',
         'reason',
+        'metadata',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'metadata' => 'array',
+        ];
+    }
 
     public function user(): BelongsTo
     {

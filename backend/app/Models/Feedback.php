@@ -7,6 +7,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Feedback extends Model
 {
+    // "feedback" dianggap kata tak terhitung oleh pluralizer, sehingga nama
+    // tabel otomatis menjadi 'feedback' padahal migrasinya 'feedbacks'.
+    protected $table = 'feedbacks';
+
     protected $fillable = [
         'placement_id',
         'student_id',

@@ -29,11 +29,11 @@ class FinalAssessmentPolicyTest extends TestCase
 
         Sanctum::actingAs($teacher);
 
-        $response = $this->postJson('/api/final-assessments', [
+        $response = $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placement->id,
         ]);
 
-        $response->assertCreated();
+        $response->assertOk();
         $this->assertEquals(83.0, (float) $response->json('data.final_score'));
 
         // Upaya memalsukan final_score dari frontend harus diabaikan/ditolak.
@@ -57,13 +57,13 @@ class FinalAssessmentPolicyTest extends TestCase
 
         Sanctum::actingAs($teacher);
 
-        $response = $this->postJson('/api/final-assessments', [
+        $response = $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placement->id,
             'final_score' => 100,
             'status' => 'published',
         ]);
 
-        $response->assertCreated();
+        $response->assertOk();
         $this->assertEquals(83.0, (float) $response->json('data.final_score'));
         $this->assertSame('draft', $response->json('data.status'));
     }
@@ -76,6 +76,7 @@ class FinalAssessmentPolicyTest extends TestCase
         $placement = $this->createPlacement($student, $company, $period);
 
         $teacher = $this->createUser('teacher', 'teacher_a');
+        $this->assignTeacher($placement, $teacher);
         $components = $this->createDefaultComponents();
 
         $companyUser = $this->createUser('company', 'company_a');
@@ -84,7 +85,7 @@ class FinalAssessmentPolicyTest extends TestCase
 
         Sanctum::actingAs($teacher);
 
-        $this->postJson('/api/final-assessments', [
+        $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placement->id,
         ])->assertStatus(422);
 
@@ -105,6 +106,7 @@ class FinalAssessmentPolicyTest extends TestCase
         $guru = $this->createComponent('guru', 30);
 
         $teacher = $this->createUser('teacher', 'teacher_a');
+        $this->assignTeacher($placement, $teacher);
         $companyUser = $this->createUser('company', 'company_a');
         $this->attachCompanySupervisor($companyUser, $company);
         $this->createAssessment($placement, $industri, $companyUser, 80);
@@ -112,7 +114,7 @@ class FinalAssessmentPolicyTest extends TestCase
 
         Sanctum::actingAs($teacher);
 
-        $this->postJson('/api/final-assessments', [
+        $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placement->id,
         ])->assertStatus(422);
     }
@@ -126,7 +128,7 @@ class FinalAssessmentPolicyTest extends TestCase
 
         Sanctum::actingAs($student);
 
-        $this->postJson('/api/final-assessments', [
+        $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => 1,
         ])->assertForbidden();
     }
@@ -143,7 +145,7 @@ class FinalAssessmentPolicyTest extends TestCase
 
         Sanctum::actingAs($companyUser);
 
-        $this->postJson('/api/final-assessments', [
+        $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => 1,
         ])->assertForbidden();
     }
@@ -163,7 +165,7 @@ class FinalAssessmentPolicyTest extends TestCase
 
         Sanctum::actingAs($companyUser);
 
-        $this->postJson('/api/final-assessments', [
+        $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placementOther->id,
         ])->assertForbidden();
     }
@@ -302,6 +304,86 @@ class FinalAssessmentPolicyTest extends TestCase
         ]);
     }
 
+    public function test_teacher_cannot_view_final_assessment_of_unassigned_student(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $placement = $this->createPlacement($student, $company, $period);
+
+        $teacher = $this->createUser('teacher', 'teacher_a');
+        $finalAssessment = $this->createFinalAssessment($placement, $teacher, 'published');
+
+        // Guru lain / belum ditugaskan ke penempatan ini.
+        $otherTeacher = $this->createUser('teacher', 'teacher_b');
+
+        Sanctum::actingAs($otherTeacher);
+
+        $this->getJson("/api/final-assessments/{$finalAssessment->id}")
+            ->assertForbidden();
+    }
+
+    public function test_teacher_cannot_calculate_final_assessment_for_unassigned_student(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $placement = $this->createPlacement($student, $company, $period);
+
+        $assignedTeacher = $this->createUser('teacher', 'teacher_assigned');
+        $this->assignTeacher($placement, $assignedTeacher);
+
+        $components = $this->createDefaultComponents();
+        $companyUser = $this->createUser('company', 'company_a');
+        $this->attachCompanySupervisor($companyUser, $company);
+        $this->createAssessment($placement, $components['industri'], $companyUser, 80);
+        $this->createAssessment($placement, $components['guru'], $assignedTeacher, 90);
+
+        $otherTeacher = $this->createUser('teacher', 'teacher_other');
+
+        Sanctum::actingAs($otherTeacher);
+
+        $this->postJson('/api/final-assessments/calculate', [
+            'placement_id' => $placement->id,
+        ])->assertForbidden();
+    }
+
+    public function test_student_index_hides_draft_and_shows_published_only(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $placement = $this->createPlacement($student, $company, $period);
+        $placement->update(['status' => 'completed']);
+
+        $teacher = $this->createUser('teacher', 'teacher_a');
+        $companyUser = $this->createUser('company', 'company_a');
+        $this->attachCompanySupervisor($companyUser, $company);
+        $this->scorePlacementFully($placement, $companyUser, $teacher);
+
+        Sanctum::actingAs($teacher);
+        $created = $this->postJson('/api/final-assessments/calculate', [
+            'placement_id' => $placement->id,
+        ])->assertOk();
+        $id = $created->json('data.id');
+
+        // Draf tidak boleh bocor lewat filter placement_id.
+        Sanctum::actingAs($student);
+        $this->getJson("/api/final-assessments?placement_id={$placement->id}")
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        // Setelah dipublikasikan admin, siswa melihatnya.
+        $admin = $this->createUser('admin', 'admin_a');
+        Sanctum::actingAs($admin);
+        $this->postJson("/api/final-assessments/{$id}/publish")->assertOk();
+
+        Sanctum::actingAs($student);
+        $this->getJson("/api/final-assessments?placement_id={$placement->id}")
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
+    }
+
     // ===================== PUBLISH / UNPUBLISH (Admin only) =====================
 
     public function test_only_admin_can_publish(): void
@@ -318,9 +400,9 @@ class FinalAssessmentPolicyTest extends TestCase
         $this->scorePlacementFully($placement, $companyUser, $teacher);
 
         Sanctum::actingAs($teacher);
-        $created = $this->postJson('/api/final-assessments', [
+        $created = $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placement->id,
-        ])->assertCreated();
+        ])->assertOk();
         $id = $created->json('data.id');
 
         // Guru tidak boleh publish.
@@ -363,9 +445,9 @@ class FinalAssessmentPolicyTest extends TestCase
         $this->scorePlacementFully($placement, $companyUser, $teacher);
 
         Sanctum::actingAs($teacher);
-        $created = $this->postJson('/api/final-assessments', [
+        $created = $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placement->id,
-        ])->assertCreated();
+        ])->assertOk();
         $id = $created->json('data.id');
 
         $admin = $this->createUser('admin', 'admin_a');
@@ -389,9 +471,9 @@ class FinalAssessmentPolicyTest extends TestCase
         $this->scorePlacementFully($placement, $companyUser, $teacher);
 
         Sanctum::actingAs($teacher);
-        $created = $this->postJson('/api/final-assessments', [
+        $created = $this->postJson('/api/final-assessments/calculate', [
             'placement_id' => $placement->id,
-        ])->assertCreated();
+        ])->assertOk();
         $id = $created->json('data.id');
 
         $admin = $this->createUser('admin', 'admin_a');

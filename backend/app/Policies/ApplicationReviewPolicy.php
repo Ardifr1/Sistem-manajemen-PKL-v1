@@ -42,10 +42,33 @@ class ApplicationReviewPolicy
         return in_array($user->role, ['company', 'admin'], true);
     }
 
+    /**
+     * Pembuatan review atas lamaran ke perusahaan tertentu.
+     *
+     * Hard Block konflik kepentingan: Admin yang menjadi anggota AKTIF
+     * perusahaan tujuan tidak boleh mengambil keputusan (approve/reject) atas
+     * nama perusahaan tersebut. Perusahaan sendiri dan admin lain tetap boleh.
+     */
+    public function createForApplication(User $user, int $companyId): bool
+    {
+        if (! $this->create($user)) {
+            return false;
+        }
+
+        if ($user->role === 'admin') {
+            return ! $this->hasConflictOfInterest($user, $companyId);
+        }
+
+        return true;
+    }
+
     public function update(User $user, ApplicationReview $applicationReview): bool
     {
         if ($user->role === 'admin') {
-            return true;
+            return ! $this->hasConflictOfInterest(
+                $user,
+                $applicationReview->application?->company_id
+            );
         }
 
         // Hanya reviewer aslinya yang boleh mengubah review.

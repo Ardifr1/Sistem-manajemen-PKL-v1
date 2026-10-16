@@ -122,7 +122,14 @@ class TestAccountsSeeder extends Seeder
         );
 
         // Satu penempatan contoh: siswa test @ PT Solusi Digital Nusantara.
+        // teacher_id & supervisor_id wajib diisi agar guru pembimbing dan
+        // pembimbing industri benar-benar ditugaskan (BR-09a) sehingga halaman
+        // penilaian mereka bisa langsung dites.
         $siswaUser = User::where('email', 'siswa@smk.sch.id')->first();
+        $guruUser = User::where('email', 'guru@smk.sch.id')->first();
+        $pembimbingProfile = $pembimbingUser
+            ? CompanySupervisor::where('user_id', $pembimbingUser->id)->first()
+            : null;
 
         if ($siswaUser) {
             $application = PklApplication::updateOrCreate(
@@ -142,6 +149,8 @@ class TestAccountsSeeder extends Seeder
                 [
                     'student_id' => $siswaUser->id,
                     'company_id' => $company->id,
+                    'teacher_id' => $guruUser?->id,
+                    'supervisor_id' => $pembimbingProfile?->id,
                     'pkl_period_id' => $period->id,
                     'start_date' => '2026-08-01',
                     'end_date' => '2026-10-31',
