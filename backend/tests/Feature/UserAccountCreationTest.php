@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Mail\AccountActivationMail;
+use App\Mail\AccountCredentialsMail;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
@@ -16,8 +16,9 @@ use Tests\TestCase;
 
 /**
  * Pembuatan akun oleh admin: tanpa username & password manual, nomor HP
- * tervalidasi, informasi akun dikirim via email + WhatsApp berupa tautan
- * aktivasi (bukan password), dan pengaturan password lewat tautan tersebut.
+ * tervalidasi, informasi akun dikirim via email + WhatsApp berupa email login
+ * + password sementara (tanpa tautan aktivasi), dan penggantian password
+ * pertama kali diwajibkan di backend.
  */
 class UserAccountCreationTest extends TestCase
 {
@@ -87,25 +88,23 @@ class UserAccountCreationTest extends TestCase
         $this->assertNotEmpty($user->username);
         $this->assertNull($response->json('data.password'));
 
-        // Token aktivasi disimpan sebagai HASH (bukan teks biasa).
-        $this->assertNotNull($user->password_setup_token);
-        $this->assertNotNull($user->password_setup_expires_at);
+        // Password sementara: hash tersimpan, wajib diganti saat login pertama.
+        $this->assertStringStartsWith('$2y$', $user->password);
+        $this->assertTrue((bool) $user->must_change_password);
+        $this->assertNull($user->password_setup_token);
 
         // Status pengiriman dilaporkan per kanal dan benar-benar sukses.
         $this->assertSame('sent', $response->json('delivery.email.status'));
         $this->assertSame('sent', $response->json('delivery.whatsapp.status'));
 
-        Mail::assertSent(AccountActivationMail::class, function (AccountActivationMail $mail) {
-            return $mail->hasTo('dewi@smk.sch.id')
-                && str_contains($mail->activationUrl, '/aktivasi')
-                && str_contains($mail->activationUrl, 'token=');
+        Mail::assertSent(AccountCredentialsMail::class, function (AccountCredentialsMail $mail) {
+            return $mail->hasTo('dewi@smk.sch.id');
         });
 
         Http::assertSent(function ($request) {
             return $request->url() === config('services.fonnte.url')
                 && $request->hasHeader('Authorization', 'test-fonnte-token')
-                && (string) ($request['target'] ?? '') === '6281234567890'
-                && str_contains((string) ($request['message'] ?? ''), 'aktivasi');
+                && (string) ($request['target'] ?? '') === '6281234567890';
         });
     }
 
@@ -129,7 +128,7 @@ class UserAccountCreationTest extends TestCase
         Http::assertSent(fn ($request) => (string) ($request['target'] ?? '') === '6281234567890');
     }
 
-    public function test_activation_token_is_hashed_and_contains_no_plaintext_password(): void
+    public function test_temporary_password_is_hashed_and_sent_without_activation_link(): void
     {
         Mail::fake();
         $this->fakeFonnteSuccess();
@@ -138,32 +137,35 @@ class UserAccountCreationTest extends TestCase
         Sanctum::actingAs($this->admin());
         $this->postJson('/api/users', $this->payload())->assertCreated();
 
-        /** @var AccountActivationMail $mail */
-        $mail = null;
-        Mail::assertSent(AccountActivationMail::class, function (AccountActivationMail $m) use (&$mail) {
-            $mail = $m;
+        $user = User::where('email', 'dewi@smk.sch.id')->firstOrFail();
+
+        // Password di DB selalu berupa hash bcrypt, bukan teks biasa.
+        $this->assertStringStartsWith('$2y$', $user->password);
+
+        // Pesan WhatsApp memuat email login + password sementara,
+        // tanpa tautan/token aktivasi.
+        $captured = null;
+        Http::assertSent(function ($request) use (&$captured) {
+            $message = (string) ($request['message'] ?? '');
+
+            if (! str_contains($message, 'Email login: dewi@smk.sch.id')) {
+                return false;
+            }
+
+            $captured = $message;
 
             return true;
         });
 
-        $rawToken = $this->tokenFromUrl($mail->activationUrl);
-        $user = User::where('email', 'dewi@smk.sch.id')->firstOrFail();
+        $this->assertNotNull($captured);
+        $this->assertStringNotContainsString('/aktivasi', $captured);
+        $this->assertStringNotContainsString('token=', $captured);
+        $this->assertStringNotContainsString('tidak pernah dikirim', $captured);
 
-        // Token mentah TIDAK disimpan; yang tersimpan adalah hash-nya.
-        $this->assertNotEmpty($rawToken);
-        $this->assertNotSame($rawToken, $user->password_setup_token);
-        $this->assertSame(hash('sha256', $rawToken), $user->password_setup_token);
-
-        // Password di DB selalu berupa hash bcrypt.
-        $this->assertStringStartsWith('$2y$', $user->password);
-
-        // Pesan WhatsApp memuat tautan aktivasi, bukan password.
-        Http::assertSent(function ($request) {
-            $message = (string) ($request['message'] ?? '');
-
-            return str_contains($message, '/aktivasi')
-                && str_contains($message, 'password tidak pernah dikirim');
-        });
+        // Password yang dikirim cocok dengan hash di DB.
+        preg_match('/Password sementara: (\S+)/', $captured, $m);
+        $this->assertNotEmpty($m[1] ?? null);
+        $this->assertTrue(Hash::check($m[1], $user->password));
     }
 
     public function test_whatsapp_reports_not_configured_without_token(): void
@@ -189,7 +191,7 @@ class UserAccountCreationTest extends TestCase
         $response = $this->postJson('/api/users', $this->payload())->assertCreated();
 
         $this->assertSame('not_configured', $response->json('delivery.email.status'));
-        $this->assertStringContainsString('MAIL_MAILER=log', $response->json('delivery.email.message'));
+        $this->assertStringContainsString('mailer "log"', $response->json('delivery.email.message'));
         Mail::assertNothingSent();
     }
 
@@ -334,23 +336,24 @@ class UserAccountCreationTest extends TestCase
         });
     }
 
+    /**
+     * Kompatibilitas mundur: akun lama yang masih memegang token aktivasi
+     * tetap dapat mengatur password via /set-password.
+     */
     public function test_user_can_set_password_via_activation_link_and_login(): void
     {
         Mail::fake();
         Http::fake();
         config(['services.fonnte.token' => null]);
 
-        Sanctum::actingAs($this->admin());
-        $this->postJson('/api/users', $this->payload())->assertCreated();
-
-        /** @var AccountActivationMail $mail */
-        $mail = null;
-        Mail::assertSent(AccountActivationMail::class, function (AccountActivationMail $m) use (&$mail) {
-            $mail = $m;
-
-            return true;
-        });
-        $token = $this->tokenFromUrl($mail->activationUrl);
+        // Siapkan akun legacy dengan token aktivasi langsung di DB.
+        $user = $this->createUser('student', 'legacy_a');
+        $token = 'token-legacy-64-karakter-abcdefghijklmnopqrstuvwxyz0123456789';
+        $user->update([
+            'email' => 'dewi@smk.sch.id',
+            'password_setup_token' => hash('sha256', $token),
+            'password_setup_expires_at' => now()->addDay(),
+        ]);
 
         // Token salah ditolak.
         $this->postJson('/api/set-password', [

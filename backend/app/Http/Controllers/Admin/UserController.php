@@ -7,8 +7,10 @@ use App\Models\PasswordResetRequest;
 use App\Models\User;
 use App\Services\AccountInfoNotifier;
 use App\Support\PhoneNumber;
+use App\Support\TemporaryPassword;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -165,41 +167,48 @@ class UserController extends Controller
             ?? $this->uniqueUsername($validated['name'], $validated['email']);
 
         $hasExplicitPassword = ! empty($plainPassword);
-        $rawToken = null;
+        $temporaryPassword = null;
 
         if ($hasExplicitPassword) {
+            // Password manual admin dipakai apa adanya (tidak diganti diam-diam).
             // Cast 'hashed' pada model akan meng-hash nilainya.
             // Pengguna wajib mengganti password ini setelah login pertama.
             $validated['password'] = $plainPassword;
             $validated['must_change_password'] = true;
             $validated['activated_at'] = now();
         } else {
-            // Password acak yang tidak diketahui siapa pun + tautan aktivasi.
-            $rawToken = Str::random(64);
-            $validated['password'] = Str::random(48);
-            $validated['password_setup_token'] = hash('sha256', $rawToken);
-            $validated['password_setup_expires_at'] = now()->addHours(
-                (int) config('simagang.activation.expires_hours', 72)
-            );
+            // Password sementara: dibuat di backend (acak, kuat, unik),
+            // disimpan sebagai hash, lalu dikirim via WhatsApp/email.
+            // Tidak ada token aktivasi untuk akun baru.
+            $temporaryPassword = TemporaryPassword::generate();
+            $validated['password'] = Hash::make($temporaryPassword);
+            $validated['must_change_password'] = true;
+            $validated['password_setup_token'] = null;
+            $validated['password_setup_expires_at'] = null;
         }
 
-        $user = User::create($validated);
+        // Akun + profil wajib tersimpan dulu dalam satu transaksi;
+        // notifikasi baru dikirim setelah transaksi berhasil.
+        $user = DB::transaction(function () use ($validated, $nis, $nip) {
+            $created = User::create($validated);
 
-        // Simpan NIS ke profil siswa / NIP ke user
-        if ($user->role === 'student' && $nis) {
-            \App\Models\StudentProfile::updateOrCreate(
-                ['user_id' => $user->id],
-                ['student_number' => $nis]
-            );
-        }
-        if ($user->role === 'teacher' && $nip) {
-            $user->update(['nip' => $nip]);
-        }
+            if ($created->role === 'student' && $nis) {
+                \App\Models\StudentProfile::updateOrCreate(
+                    ['user_id' => $created->id],
+                    ['student_number' => $nis]
+                );
+            }
+            if ($created->role === 'teacher' && $nip) {
+                $created->update(['nip' => $nip]);
+            }
 
-        // Kirim informasi akun (tautan aktivasi) via email + WhatsApp.
+            return $created->fresh();
+        });
+
+        // Kirim informasi login via email + WhatsApp.
         // Kegagalan notifikasi TIDAK boleh membatalkan akun yang sudah dibuat.
-        $delivery = $rawToken !== null
-            ? $this->notifySafely($notifier, $user, $rawToken)
+        $delivery = $temporaryPassword !== null
+            ? $this->notifyCredentialsSafely($notifier, $user, $temporaryPassword)
             : null;
 
         $user->makeHidden('password');
@@ -212,7 +221,16 @@ class UserController extends Controller
     }
 
     /**
-     * Kirim ulang informasi akun (tautan aktivasi) ke email & WhatsApp.
+     * Kirim ulang kredensial/informasi akun ke email & WhatsApp.
+     *
+     * - Akun legacy dengan token aktivasi yang masih berlaku: kirim ulang
+     *   tautan aktivasi (token diregenerasi seperti sebelumnya).
+     * - Akun dengan password sementara yang belum diganti: buat password
+     *   sementara BARU, simpan hash-nya, kirim yang baru. Password lama
+     *   otomatis tidak berlaku lagi.
+     * - Akun yang sudah punya password sendiri: tidak ada yang dikirim ulang.
+     *
+     * Tidak pernah membuat akun duplikat.
      */
     public function resendAccountInfo(
         Request $request,
@@ -222,36 +240,59 @@ class UserController extends Controller
         // Hanya admin (policy create) yang boleh mengirim ulang info akun.
         Gate::authorize('create', User::class);
 
-        // Token mentah lama tidak bisa dipulihkan dari hash. Simpan nilai lama
-        // agar tautan yang sudah beredar tetap valid bila TIDAK ada kanal yang
-        // berhasil mengirim token baru.
-        $previousToken = $user->password_setup_token;
-        $previousExpiry = $user->password_setup_expires_at;
+        // 1. Legacy: token aktivasi masih berlaku → kirim ulang tautan.
+        if (
+            $user->password_setup_token
+            && $user->password_setup_expires_at
+            && $user->password_setup_expires_at->isFuture()
+        ) {
+            // Token mentah lama tidak bisa dipulihkan dari hash. Simpan nilai
+            // lama agar tautan yang sudah beredar tetap valid bila TIDAK ada
+            // kanal yang berhasil mengirim token baru.
+            $previousToken = $user->password_setup_token;
+            $previousExpiry = $user->password_setup_expires_at;
 
-        $rawToken = Str::random(64);
-        $user->update([
-            'password_setup_token' => hash('sha256', $rawToken),
-            'password_setup_expires_at' => now()->addHours(
-                (int) config('simagang.activation.expires_hours', 72)
-            ),
-        ]);
-
-        $delivery = $this->notifySafely($notifier, $user->fresh(), $rawToken);
-
-        if ($previousToken !== null && ! $this->anyChannelSent($delivery)) {
-            // Tidak ada penerima yang mendapatkan token baru: kembalikan token
-            // lama agar tautan sebelumnya tidak ikut rusak. Tidak ada akun
-            // baru yang dibuat oleh operasi ini.
+            $rawToken = Str::random(64);
             $user->update([
-                'password_setup_token' => $previousToken,
-                'password_setup_expires_at' => $previousExpiry,
+                'password_setup_token' => hash('sha256', $rawToken),
+                'password_setup_expires_at' => now()->addHours(
+                    (int) config('simagang.activation.expires_hours', 72)
+                ),
+            ]);
+
+            $delivery = $this->notifySafely($notifier, $user->fresh(), $rawToken);
+
+            if ($previousToken !== null && ! $this->anyChannelSent($delivery)) {
+                $user->update([
+                    'password_setup_token' => $previousToken,
+                    'password_setup_expires_at' => $previousExpiry,
+                ]);
+            }
+
+            return response()->json([
+                'message' => 'Tautan aktivasi dikirim ulang.',
+                'data' => ['delivery' => $delivery],
             ]);
         }
 
+        // 2. Password sementara belum diganti → terbitkan yang baru.
+        if ($user->must_change_password) {
+            $temporaryPassword = TemporaryPassword::generate();
+            $user->update(['password' => Hash::make($temporaryPassword)]);
+
+            $delivery = $this->notifyCredentialsSafely($notifier, $user->fresh(), $temporaryPassword);
+
+            return response()->json([
+                'message' => 'Password sementara baru telah dibuat dan dikirim. Password lama tidak berlaku lagi.',
+                'data' => ['delivery' => $delivery],
+            ]);
+        }
+
+        // 3. Akun sudah memiliki password sendiri → tidak ada yang dikirim.
         return response()->json([
-            'message' => 'Informasi akun dikirim ulang.',
-            'data' => ['delivery' => $delivery],
-        ]);
+            'message' => 'Akun sudah memiliki password sendiri. Tidak ada kredensial yang dikirim ulang.',
+            'data' => ['delivery' => null],
+        ], 422);
     }
 
     /**
@@ -268,6 +309,36 @@ class UserController extends Controller
 
         if (is_string($phone) || $phone === null) {
             $request->merge(['phone' => PhoneNumber::normalize($phone)]);
+        }
+    }
+
+    /**
+     * @return array{email: array{status:string,message:string,driver?:string}, whatsapp: array{status:string,message:string}}
+     */
+    private function notifyCredentialsSafely(
+        AccountInfoNotifier $notifier,
+        User $user,
+        string $temporaryPassword
+    ): array {
+        try {
+            return $notifier->sendCredentials($user, $temporaryPassword);
+        } catch (Throwable $e) {
+            // Jangan log password: hanya kelas exception yang dicatat.
+            Log::error('Gagal mengirim kredensial akun.', [
+                'user_id' => $user->id,
+                'exception' => $e::class,
+            ]);
+
+            return [
+                'email' => [
+                    'status' => 'failed',
+                    'message' => 'Email gagal dikirim.',
+                ],
+                'whatsapp' => [
+                    'status' => 'failed',
+                    'message' => 'WhatsApp gagal dikirim.',
+                ],
+            ];
         }
     }
 

@@ -127,6 +127,7 @@ class AuthController extends Controller
         $user->update([
             'password' => $validated['password'],
             'must_change_password' => false,
+            'activated_at' => $user->activated_at ?? now(),
         ]);
 
         return response()->json([

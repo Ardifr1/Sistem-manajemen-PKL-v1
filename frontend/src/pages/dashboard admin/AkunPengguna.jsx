@@ -21,7 +21,7 @@ function DetailPengguna({ row, onBack, onEdit, onHapus, onMeta }) {
   const [placement, setPlacement] = useState(null);
   const [companyName, setCompanyName] = useState("");
   const [teacherName, setTeacherName] = useState("");
-  // Status pengiriman ulang informasi akun (tautan aktivasi).
+  // Status pengiriman ulang kredensial/info akun.
   const [resending, setResending] = useState(false);
   const [resendResult, setResendResult] = useState(null);
 
@@ -529,8 +529,9 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
         onSaved?.();
       } else {
         const res = await usersApi.store(payload);
-        // Akun tanpa password manual: backend mengirim tautan aktivasi via
-        // email + WhatsApp dan mengembalikan status tiap kanal.
+        // Akun tanpa password manual: backend membuat password sementara
+        // dan mengirim email login + password via email & WhatsApp,
+        // mengembalikan status tiap kanal.
         if (res?.delivery) setDelivery(res.delivery);
         else onSaved?.();
       }
@@ -602,7 +603,7 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
               placeholder="cth 081234567890"
             />
             <small className="zip-hint">
-              Dipakai untuk mengirim tautan aktivasi via WhatsApp. Format: 08… / +62….
+              Dipakai untuk mengirim info login via WhatsApp. Format: 08… / +62….
             </small>
           </label>
           <label className="zip-field">
@@ -646,7 +647,7 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
             <small className="zip-hint">
               {isEdit
                 ? "Kosongkan bila tidak ingin mengubah password."
-                : "Kosongkan agar sistem mengirim tautan aktivasi via email & WhatsApp. Password tidak pernah dikirim sebagai teks biasa."}
+                : "Kosongkan agar sistem membuat password sementara dan mengirim email login + password via email & WhatsApp. Pengguna wajib mengganti password saat pertama masuk."}
             </small>
           </label>
           <div className="zip-field">

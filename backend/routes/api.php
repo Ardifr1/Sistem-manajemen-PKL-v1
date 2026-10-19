@@ -30,10 +30,10 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/set-password', [AuthController::class, 'setPassword']);
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'password.changed'])->group(function () {
 
-    Route::post('/logout', [AuthController::class, 'logout']);
-    Route::post('/change-password', [AuthController::class, 'changePassword']);
+    Route::post('/logout', [AuthController::class, 'logout'])->withoutMiddleware('password.changed');
+    Route::post('/change-password', [AuthController::class, 'changePassword'])->withoutMiddleware('password.changed');
 
     // Company
     Route::apiResource('companies', CompanyController::class);

@@ -3,14 +3,22 @@
 namespace App\Services;
 
 use App\Mail\AccountActivationMail;
+use App\Mail\AccountCredentialsMail;
 use App\Models\User;
 use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 /**
- * Mengirim informasi akun baru ke email dan WhatsApp dalam bentuk
- * TAUTAN AKTIVASI (bukan password). Mengembalikan status tiap kanal agar
- * admin dapat melihat bila pengiriman gagal.
+ * Mengirim informasi akun baru ke email dan WhatsApp.
+ *
+ * Dua mode pengiriman:
+ * - send(): TAUTAN AKTIVASI (mode lama, dipertahankan untuk kompatibilitas
+ *   akun yang masih memegang token aktivasi).
+ * - sendCredentials(): EMAIL LOGIN + PASSWORD SEMENTARA (mode aktif sejak
+ *   revisi 2026-10-19; pesan WhatsApp tidak lagi memuat tautan/token).
+ *
+ * Mengembalikan status tiap kanal agar admin dapat melihat bila pengiriman
+ * gagal. Password tidak pernah ditulis ke log.
  */
 class AccountInfoNotifier
 {
@@ -51,6 +59,72 @@ class AccountInfoNotifier
             'email' => $user->email,
             'token' => $rawToken,
         ]);
+    }
+
+    /**
+     * Kirim email login + password sementara via email dan WhatsApp.
+     *
+     * @return array{email: array{status:string,message:string,driver?:string}, whatsapp: array{status:string,message:string}}
+     */
+    public function sendCredentials(User $user, string $temporaryPassword): array
+    {
+        $roleLabel = self::ROLE_LABEL[$user->role] ?? $user->role;
+
+        return [
+            'email' => $this->sendCredentialsEmail($user, $temporaryPassword, $roleLabel),
+            'whatsapp' => $this->whatsapp->send(
+                $user->phone,
+                $this->credentialsWhatsAppMessage($user, $temporaryPassword)
+            ),
+        ];
+    }
+
+    private function credentialsWhatsAppMessage(User $user, string $temporaryPassword): string
+    {
+        return "Halo {$user->name}, akun SiMagang Anda berhasil dibuat.\n\n"
+            ."Berikut informasi login Anda:\n\n"
+            ."Email login: {$user->email}\n"
+            ."Password sementara: {$temporaryPassword}\n\n"
+            ."Silakan login ke SiMagang menggunakan informasi tersebut. "
+            ."Demi keamanan, Anda wajib mengganti password saat pertama kali masuk.";
+    }
+
+    /**
+     * @return array{status:string,message:string,driver?:string}
+     */
+    private function sendCredentialsEmail(User $user, string $temporaryPassword, string $roleLabel): array
+    {
+        $driver = (string) config('mail.default');
+
+        // Mailer `log`/`array` menulis seluruh isi email ke log — password
+        // sementara tidak boleh bocor ke log. Laporkan apa adanya.
+        if (in_array($driver, ['log', 'array'], true)) {
+            return [
+                'status' => 'not_configured',
+                'message' => "Email tidak dikirim (mailer \"{$driver}\" menulis isi email ke log). Atur MAIL_MAILER SMTP/Gmail.",
+                'driver' => $driver,
+            ];
+        }
+
+        try {
+            Mail::to($user->email)->send(
+                new AccountCredentialsMail($user->name, $user->email, $temporaryPassword, $roleLabel)
+            );
+        } catch (Throwable $e) {
+            report($e);
+
+            return [
+                'status' => 'failed',
+                'message' => 'Email gagal dikirim.',
+                'driver' => $driver,
+            ];
+        }
+
+        return [
+            'status' => 'sent',
+            'message' => 'Email informasi login terkirim.',
+            'driver' => $driver,
+        ];
     }
 
     private function whatsAppMessage(User $user, string $url, string $roleLabel, int $expiresHours): string
