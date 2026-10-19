@@ -166,6 +166,10 @@ function PerusahaanPartner({ onMeta }) {
   const [busy, setBusy] = useState(false);
   const [rejecting, setRejecting] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
+  // Modal persetujuan: pilih akses (kapabilitas) untuk akun perusahaan baru.
+  const [approving, setApproving] = useState(null);
+  const [approveCaps, setApproveCaps] = useState([]);
+  const [approveResult, setApproveResult] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -191,19 +195,37 @@ function PerusahaanPartner({ onMeta }) {
     }
   };
 
-  const verifyProposal = async (company, action, reason) => {
+  const verifyProposal = async (company, action, reason, capabilities) => {
     setBusy(true);
     setError("");
     try {
-      await companyProposalsApi.verify(company.id, { action, reason });
+      const res = await companyProposalsApi.verify(company.id, { action, reason, capabilities });
       setRejecting(null);
       setRejectReason("");
+      setApproving(null);
+      if (action === "approve") setApproveResult(res);
       await load();
     } catch (err) {
       setError(err?.message || "Gagal memverifikasi pengajuan perusahaan.");
     } finally {
       setBusy(false);
     }
+  };
+
+  const CAPABILITY_OPTIONS = [
+    { value: "company_admin", label: "Admin Perusahaan" },
+    { value: "review_applications", label: "Meninjau Pengajuan" },
+    { value: "verify_journals", label: "Verifikasi Jurnal" },
+  ];
+
+  const toggleApproveCap = (v) => setApproveCaps((c) =>
+    c.includes(v) ? c.filter((x) => x !== v) : [...c, v]
+  );
+
+  const openApprove = (company) => {
+    setApproveResult(null);
+    setApproveCaps(CAPABILITY_OPTIONS.map((o) => o.value));
+    setApproving(company);
   };
 
   const saveMembership = async (companyId, payload) => {
@@ -409,7 +431,7 @@ function PerusahaanPartner({ onMeta }) {
                     type="button"
                     className="zip-btn zip-btn-primary"
                     disabled={busy}
-                    onClick={() => verifyProposal(p, "approve")}
+                    onClick={() => openApprove(p)}
                   >
                     Setujui
                   </button>
@@ -446,6 +468,59 @@ function PerusahaanPartner({ onMeta }) {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {approving && (
+        <div className="zip-modal-backdrop" onClick={() => !busy && setApproving(null)}>
+          <div className="zip-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <h3>Setujui & Buatkan Akun</h3>
+            <p className="zip-muted" style={{ fontSize: 13 }}>
+              <strong>{approving.name}</strong> akan didaftarkan sebagai mitra dan otomatis
+              dibuatkan akun perusahaan untuk <strong>{approving.contact_person || approving.email}</strong> ({approving.email}).
+              Info login dikirim via WhatsApp & email.
+            </p>
+            <div className="zip-field" style={{ marginTop: 8 }}>
+              <span>Beri akses</span>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 4 }}>
+                {CAPABILITY_OPTIONS.map((o) => (
+                  <label key={o.value} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={approveCaps.includes(o.value)}
+                      onChange={() => toggleApproveCap(o.value)}
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button
+                type="button"
+                className="zip-btn zip-btn-primary"
+                disabled={busy}
+                onClick={() => verifyProposal(approving, "approve", undefined, approveCaps)}
+              >
+                {busy ? "Memproses…" : "Setujui & Buatkan Akun"}
+              </button>
+              <button
+                type="button"
+                className="zip-btn zip-btn-outline"
+                disabled={busy}
+                onClick={() => setApproving(null)}
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {approveResult?.account && (
+        <div className="zip-note" style={{ marginBottom: 14 }}>
+          <strong><i className="fa-solid fa-circle-check"></i> Akun perusahaan dibuat: {approveResult.account.name} ({approveResult.account.email})</strong>
+          <div className="zip-muted" style={{ fontSize: 13, marginTop: 4 }}>
+            WhatsApp: {approveResult.delivery?.whatsapp?.status || "-"} • Email: {approveResult.delivery?.email?.status || "-"}
           </div>
         </div>
       )}

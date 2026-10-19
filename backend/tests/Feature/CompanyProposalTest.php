@@ -3,8 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\Company;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\ManagesPklTestData;
@@ -341,5 +344,131 @@ class CompanyProposalTest extends TestCase
         $pending = $this->getJson('/api/company-proposals?verification_status=pending_school_verification')
             ->assertOk();
         $this->assertCount(2, $pending->json('data'));
+    }
+
+    public function test_approve_creates_company_account_with_access_and_sends_credentials(): void
+    {
+        Mail::fake();
+        Http::fake(fn () => Http::response(['status' => true, 'detail' => 'success! message in queue'], 200));
+        config(['services.fonnte.token' => 'test-fonnte-token']);
+
+        $student = $this->createUser('student', 'student_a');
+        $admin = $this->createUser('admin', 'admin_a');
+
+        Sanctum::actingAs($student);
+        $this->postJson('/api/company-proposals', $this->payload())->assertCreated();
+        $company = Company::query()->where('name', 'PT Usaha Baru')->firstOrFail();
+
+        Sanctum::actingAs($admin);
+        $response = $this->patchJson("/api/company-proposals/{$company->id}/verify", [
+            'action' => 'approve',
+        ])->assertOk();
+
+        // Akun perusahaan dibuat otomatis.
+        $user = User::where('email', 'hrd@usahabaru.test')->firstOrFail();
+        $this->assertSame('company', $user->role);
+        $this->assertTrue((bool) $user->must_change_password);
+        $this->assertStringStartsWith('$2y$', $user->password);
+
+        // Akun terhubung ke perusahaannya.
+        $this->assertDatabaseHas('company_supervisors', [
+            'user_id' => $user->id,
+            'company_id' => $company->id,
+        ]);
+
+        // Akses (kapabilitas) default: penuh.
+        $this->assertDatabaseHas('company_memberships', [
+            'user_id' => $user->id,
+            'company_id' => $company->id,
+            'status' => 'active',
+        ]);
+        $membership = \App\Models\CompanyMembership::where('user_id', $user->id)->firstOrFail();
+        $this->assertEqualsCanonicalizing(
+            \App\Models\CompanyMembership::CAPABILITIES,
+            $membership->capabilities
+        );
+
+        // Kredensial dikirim via WhatsApp berisi email + password sementara.
+        $this->assertSame('sent', $response->json('delivery.whatsapp.status'));
+        Http::assertSent(function ($request) {
+            $message = (string) ($request['message'] ?? '');
+
+            return str_contains($message, 'Email login: hrd@usahabaru.test')
+                && str_contains($message, 'Password sementara: ');
+        });
+
+        $this->assertSame($user->id, $response->json('account.id'));
+    }
+
+    public function test_approve_with_custom_capabilities(): void
+    {
+        Mail::fake();
+        Http::fake();
+        config(['services.fonnte.token' => null]);
+
+        $student = $this->createUser('student', 'student_a');
+        $admin = $this->createUser('admin', 'admin_a');
+
+        Sanctum::actingAs($student);
+        $this->postJson('/api/company-proposals', $this->payload())->assertCreated();
+        $company = Company::query()->where('name', 'PT Usaha Baru')->firstOrFail();
+
+        Sanctum::actingAs($admin);
+        $this->patchJson("/api/company-proposals/{$company->id}/verify", [
+            'action' => 'approve',
+            'capabilities' => ['review_applications'],
+        ])->assertOk();
+
+        $user = User::where('email', 'hrd@usahabaru.test')->firstOrFail();
+        $membership = \App\Models\CompanyMembership::where('user_id', $user->id)->firstOrFail();
+        $this->assertSame(['review_applications'], $membership->capabilities);
+    }
+
+    public function test_approve_rejected_when_company_email_already_registered(): void
+    {
+        Mail::fake();
+        Http::fake();
+
+        $student = $this->createUser('student', 'student_a');
+        $admin = $this->createUser('admin', 'admin_a');
+        $this->createUser('company', 'existing_co');
+        User::where('username', 'existing_co')->update(['email' => 'hrd@usahabaru.test']);
+
+        Sanctum::actingAs($student);
+        $this->postJson('/api/company-proposals', $this->payload())->assertCreated();
+        $company = Company::query()->where('name', 'PT Usaha Baru')->firstOrFail();
+
+        Sanctum::actingAs($admin);
+        $this->patchJson("/api/company-proposals/{$company->id}/verify", [
+            'action' => 'approve',
+        ])->assertStatus(422);
+
+        // Perusahaan tetap pending; tidak ada akun ganda.
+        $this->assertSame(
+            Company::VERIFICATION_PENDING,
+            $company->fresh()->verification_status
+        );
+        $this->assertSame(1, User::where('email', 'hrd@usahabaru.test')->count());
+    }
+
+    public function test_reject_does_not_create_company_account(): void
+    {
+        Mail::fake();
+        Http::fake();
+
+        $student = $this->createUser('student', 'student_a');
+        $admin = $this->createUser('admin', 'admin_a');
+
+        Sanctum::actingAs($student);
+        $this->postJson('/api/company-proposals', $this->payload())->assertCreated();
+        $company = Company::query()->where('name', 'PT Usaha Baru')->firstOrFail();
+
+        Sanctum::actingAs($admin);
+        $this->patchJson("/api/company-proposals/{$company->id}/verify", [
+            'action' => 'reject',
+            'reason' => 'Dokumen tidak lengkap.',
+        ])->assertOk();
+
+        $this->assertDatabaseMissing('users', ['email' => 'hrd@usahabaru.test']);
     }
 }

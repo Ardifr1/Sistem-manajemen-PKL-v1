@@ -5,11 +5,21 @@ namespace App\Http\Controllers\Student;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\Company;
+use App\Models\CompanyMembership;
+use App\Models\CompanySupervisor;
+use App\Models\User;
+use App\Services\AccountInfoNotifier;
+use App\Support\PhoneNumber;
+use App\Support\TemporaryPassword;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Throwable;
 
 /**
  * Alur perusahaan NONMITRA (PRD bagian D).
@@ -157,13 +167,17 @@ class CompanyProposalController extends Controller
      * approve -> perusahaan menjadi mitra & aktif (dipakai alur pengajuan biasa)
      * reject  -> wajib alasan.
      */
-    public function verify(Request $request, Company $company): JsonResponse
+    public function verify(Request $request, Company $company, AccountInfoNotifier $notifier): JsonResponse
     {
         Gate::authorize('verifyProposal', Company::class);
 
         $validated = $request->validate([
             'action' => ['required', Rule::in(['approve', 'reject'])],
             'reason' => ['nullable', 'string', 'min:5', 'max:1000'],
+            // Akses (kapabilitas) untuk akun perusahaan yang dibuat otomatis
+            // saat persetujuan. Default: akses penuh.
+            'capabilities' => ['nullable', 'array'],
+            'capabilities.*' => [Rule::in(CompanyMembership::CAPABILITIES)],
         ]);
 
         if (! $company->isPendingSchoolVerification()) {
@@ -182,36 +196,146 @@ class CompanyProposalController extends Controller
         $oldStatus = $company->verification_status;
         $newStatus = $approved ? Company::VERIFICATION_VERIFIED : Company::VERIFICATION_REJECTED;
 
-        $company->update([
-            'verification_status' => $newStatus,
-            'is_partner' => $approved,
-            'is_active' => $approved,
-            'verification_note' => $validated['reason'] ?? null,
-            'verified_by' => $request->user()->id,
-            'verified_at' => now(),
-        ]);
+        // Akun perusahaan dibuat otomatis saat disetujui — email harus unik.
+        if ($approved && User::where('email', $company->email)->exists()) {
+            return response()->json([
+                'message' => 'Email perusahaan sudah terdaftar sebagai pengguna. Hubungkan manual lewat Tambah Pengguna.',
+            ], 422);
+        }
 
-        AuditLog::create([
-            'user_id' => $request->user()->id,
-            'action' => $approved ? 'company_proposal.approved' : 'company_proposal.rejected',
-            'subject_type' => Company::class,
-            'subject_id' => $company->id,
-            'old_status' => $oldStatus,
-            'new_status' => $newStatus,
-            'reason' => $validated['reason'] ?? null,
-            'metadata' => [
-                'company_id' => $company->id,
-                'name' => $company->name,
-            ],
-        ]);
+        $capabilities = $approved
+            ? array_values($validated['capabilities'] ?? CompanyMembership::CAPABILITIES)
+            : [];
+
+        [$user, $temporaryPassword] = DB::transaction(function () use (
+            $request, $company, $approved, $oldStatus, $newStatus, $validated, $capabilities
+        ) {
+            $company->update([
+                'verification_status' => $newStatus,
+                'is_partner' => $approved,
+                'is_active' => $approved,
+                'verification_note' => $validated['reason'] ?? null,
+                'verified_by' => $request->user()->id,
+                'verified_at' => now(),
+            ]);
+
+            AuditLog::create([
+                'user_id' => $request->user()->id,
+                'action' => $approved ? 'company_proposal.approved' : 'company_proposal.rejected',
+                'subject_type' => Company::class,
+                'subject_id' => $company->id,
+                'old_status' => $oldStatus,
+                'new_status' => $newStatus,
+                'reason' => $validated['reason'] ?? null,
+                'metadata' => [
+                    'company_id' => $company->id,
+                    'name' => $company->name,
+                ],
+            ]);
+
+            $createdUser = null;
+            $tempPassword = null;
+
+            if ($approved) {
+                // Buatkan akun perusahaan otomatis + hubungkan ke perusahaannya.
+                $tempPassword = TemporaryPassword::generate();
+                $name = $company->contact_person ?: $company->name;
+
+                $createdUser = User::create([
+                    'name' => $name,
+                    'username' => $this->uniqueUsername($name, $company->email),
+                    'email' => $company->email,
+                    'phone' => PhoneNumber::normalize($company->phone),
+                    'password' => Hash::make($tempPassword),
+                    'role' => 'company',
+                    'is_active' => true,
+                    'must_change_password' => true,
+                ]);
+
+                CompanySupervisor::create([
+                    'user_id' => $createdUser->id,
+                    'company_id' => $company->id,
+                    'position' => 'Admin Perusahaan',
+                ]);
+
+                CompanyMembership::create([
+                    'user_id' => $createdUser->id,
+                    'company_id' => $company->id,
+                    'status' => CompanyMembership::STATUS_ACTIVE,
+                    'capabilities' => $capabilities,
+                    'granted_by' => $request->user()->id,
+                    'granted_at' => now(),
+                ]);
+            }
+
+            return [$createdUser, $tempPassword];
+        });
+
+        // Kirim kredensial setelah transaksi berhasil. Kegagalan notifikasi
+        // tidak membatalkan persetujuan maupun akun yang sudah dibuat.
+        $delivery = null;
+        if ($user && $temporaryPassword) {
+            $delivery = $this->notifySafely($notifier, $user, $temporaryPassword);
+        }
 
         $company->load(['submitter:id,name,username,email,role', 'verifier:id,name']);
 
         return response()->json([
             'message' => $approved
-                ? 'Perusahaan disetujui dan didaftarkan sebagai mitra.'
+                ? 'Perusahaan disetujui, akun perusahaan dibuat dan info login dikirim.'
                 : 'Pengajuan perusahaan ditolak.',
             'data' => $company,
+            'account' => $user ? [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'capabilities' => $capabilities,
+            ] : null,
+            'delivery' => $delivery,
         ]);
+    }
+
+    /**
+     * @return array{email: array{status:string,message:string,driver?:string}, whatsapp: array{status:string,message:string}}
+     */
+    private function notifySafely(AccountInfoNotifier $notifier, User $user, string $temporaryPassword): array
+    {
+        try {
+            return $notifier->sendCredentials($user, $temporaryPassword);
+        } catch (Throwable $e) {
+            // Jangan log password: hanya kelas exception yang dicatat.
+            Log::error('Gagal mengirim kredensial akun perusahaan.', [
+                'user_id' => $user->id,
+                'exception' => $e::class,
+            ]);
+
+            return [
+                'email' => ['status' => 'failed', 'message' => 'Email gagal dikirim.'],
+                'whatsapp' => ['status' => 'failed', 'message' => 'WhatsApp gagal dikirim.'],
+            ];
+        }
+    }
+
+    private function uniqueUsername(string $name, string $email): string
+    {
+        $base = Str::slug($name, '.');
+
+        if ($base === '') {
+            $base = Str::slug(Str::before($email, '@'), '.');
+        }
+
+        if ($base === '') {
+            $base = 'perusahaan';
+        }
+
+        $candidate = $base;
+        $suffix = 1;
+
+        while (User::query()->where('username', $candidate)->exists()) {
+            $suffix++;
+            $candidate = "{$base}.{$suffix}";
+        }
+
+        return $candidate;
     }
 }
