@@ -39,13 +39,14 @@ function RoleHome() {
 }
 
 /** Rute yang butuh login — lempar ke /login kalau belum ada token. */
-function ProtectedRoute({ roles, children }) {
+function ProtectedRoute({ roles, children, allowPasswordChange = false }) {
   const user = authApi.currentUser();
   const token = readToken();
   if (!user || !token) {
     return <Navigate to="/login" replace />;
   }
-  if (user.must_change_password) {
+  // Halaman /ganti-password sendiri dikecualikan agar tidak redirect ke dirinya sendiri.
+  if (user.must_change_password && !allowPasswordChange) {
     return <Navigate to="/ganti-password" replace />;
   }
   if (roles && !roles.includes(user.role)) {
@@ -95,7 +96,7 @@ function App() {
         <Route
           path="/ganti-password"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute allowPasswordChange>
               <GantiPassword />
             </ProtectedRoute>
           }
