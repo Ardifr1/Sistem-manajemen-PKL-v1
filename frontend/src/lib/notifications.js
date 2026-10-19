@@ -8,6 +8,7 @@ import {
   applicationsApi,
   placementsApi,
   assessmentsApi,
+  usersApi,
 } from "../api/index.js";
 import {
   getEnrichedPlacements,
@@ -158,6 +159,16 @@ async function supervisorNotifs() {
 /* ---------------- admin ---------------- */
 async function adminNotifs() {
   const out = [];
+  const resets = await safe(() => usersApi.resetRequests().then(arr));
+  if (resets.length) {
+    out.push({
+      icon: "fa-key",
+      tone: "red",
+      text: `${resets.length} permintaan reset password`,
+      time: "Kelola Pengguna",
+      to: "pengguna",
+    });
+  }
   const apps = await safe(() => applicationsApi.index().then(arr));
   const pending = apps.filter((a) => ["pending", "submitted"].includes(a.status));
   if (pending.length) {
