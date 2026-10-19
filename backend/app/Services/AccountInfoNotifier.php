@@ -68,6 +68,17 @@ class AccountInfoNotifier
     {
         $driver = (string) config('mail.default');
 
+        // Mailer `log` menulis seluruh isi email ke laravel.log, termasuk
+        // tautan yang memuat token aktivasi. Jangan gunakan kanal ini untuk
+        // email aktivasi agar token tidak bocor ke log.
+        if ($driver === 'log') {
+            return [
+                'status' => 'not_configured',
+                'message' => 'Email tidak dikirim karena MAIL_MAILER=log (token aktivasi tidak boleh ditulis ke log). Atur MAIL_MAILER SMTP/Gmail.',
+                'driver' => $driver,
+            ];
+        }
+
         try {
             Mail::to($user->email)->send(
                 new AccountActivationMail($user->name, $url, $roleLabel, $expiresHours)

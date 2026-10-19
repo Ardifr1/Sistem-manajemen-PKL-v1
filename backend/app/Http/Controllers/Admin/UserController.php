@@ -6,34 +6,43 @@ use App\Http\Controllers\Controller;
 use App\Models\PasswordResetRequest;
 use App\Models\User;
 use App\Services\AccountInfoNotifier;
+use App\Support\PhoneNumber;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Throwable;
 
 class UserController extends Controller
 {
-    /** Format nomor HP/WhatsApp Indonesia (0… atau +62…). */
-    private const PHONE_REGEX = '/^(\+62|62|0)8[0-9]{7,12}$/';
-
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', User::class);
 
         $me = $request->user();
+
+        // Nomor WhatsApp hanya perlu untuk admin (form edit/detail). Jangan
+        // perluas data pribadi ke peran lain yang hanya butuh nama/email.
+        $columns = [
+            'id',
+            'name',
+            'username',
+            'email',
+            'role',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ];
+
+        if ($me->role === 'admin') {
+            $columns[] = 'phone';
+        }
+
         $query = User::query()
-            ->select([
-                'id',
-                'name',
-                'username',
-                'email',
-                'role',
-                'is_active',
-                'created_at',
-                'updated_at',
-            ])
+            ->select($columns)
             ->when($request->filled('role'), fn ($q) => $q->where('role', $request->string('role')))
             ->when($request->filled('q'), function ($q) use ($request) {
                 $s = '%' . $request->string('q') . '%';
@@ -87,6 +96,8 @@ class UserController extends Controller
     {
         Gate::authorize('create', User::class);
 
+        $this->normalizePhoneInput($request);
+
         $validated = $request->validate([
             'name' => [
                 'required',
@@ -103,7 +114,7 @@ class UserController extends Controller
                 'nullable',
                 'string',
                 'max:30',
-                'regex:'.self::PHONE_REGEX,
+                'regex:'.PhoneNumber::REGEX,
             ],
             // Username tidak lagi diisi admin — dibuat otomatis bila kosong,
             // namun tetap boleh dikirim eksplisit (mis. dari impor).
@@ -183,8 +194,9 @@ class UserController extends Controller
         }
 
         // Kirim informasi akun (tautan aktivasi) via email + WhatsApp.
+        // Kegagalan notifikasi TIDAK boleh membatalkan akun yang sudah dibuat.
         $delivery = $rawToken !== null
-            ? $notifier->send($user, $rawToken)
+            ? $this->notifySafely($notifier, $user, $rawToken)
             : null;
 
         $user->makeHidden('password');
@@ -204,9 +216,14 @@ class UserController extends Controller
         User $user,
         AccountInfoNotifier $notifier
     ): JsonResponse {
-        if ($request->user()->role !== 'admin') {
-            return response()->json(['message' => 'Akses ditolak.'], 403);
-        }
+        // Hanya admin (policy create) yang boleh mengirim ulang info akun.
+        Gate::authorize('create', User::class);
+
+        // Token mentah lama tidak bisa dipulihkan dari hash. Simpan nilai lama
+        // agar tautan yang sudah beredar tetap valid bila TIDAK ada kanal yang
+        // berhasil mengirim token baru.
+        $previousToken = $user->password_setup_token;
+        $previousExpiry = $user->password_setup_expires_at;
 
         $rawToken = Str::random(64);
         $user->update([
@@ -216,12 +233,73 @@ class UserController extends Controller
             ),
         ]);
 
-        $delivery = $notifier->send($user->fresh(), $rawToken);
+        $delivery = $this->notifySafely($notifier, $user->fresh(), $rawToken);
+
+        if ($previousToken !== null && ! $this->anyChannelSent($delivery)) {
+            // Tidak ada penerima yang mendapatkan token baru: kembalikan token
+            // lama agar tautan sebelumnya tidak ikut rusak. Tidak ada akun
+            // baru yang dibuat oleh operasi ini.
+            $user->update([
+                'password_setup_token' => $previousToken,
+                'password_setup_expires_at' => $previousExpiry,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Informasi akun dikirim ulang.',
             'data' => ['delivery' => $delivery],
         ]);
+    }
+
+    /**
+     * Nomor yang diketik bebas (spasi/strip) dinormalisasi sebelum validasi,
+     * lalu disimpan sebagai 628xxxxxxxxxx.
+     */
+    private function normalizePhoneInput(Request $request): void
+    {
+        if (! $request->exists('phone')) {
+            return;
+        }
+
+        $phone = $request->input('phone');
+
+        if (is_string($phone) || $phone === null) {
+            $request->merge(['phone' => PhoneNumber::normalize($phone)]);
+        }
+    }
+
+    /**
+     * @return array{email: array{status:string,message:string,driver?:string}, whatsapp: array{status:string,message:string}}
+     */
+    private function notifySafely(AccountInfoNotifier $notifier, User $user, string $rawToken): array
+    {
+        try {
+            return $notifier->send($user, $rawToken);
+        } catch (Throwable $e) {
+            // Jangan log pesan exception mentah: bisa memuat detail internal.
+            Log::error('Gagal mengirim informasi akun.', [
+                'user_id' => $user->id,
+                'exception' => $e::class,
+            ]);
+
+            return [
+                'email' => [
+                    'status' => 'failed',
+                    'message' => 'Email gagal dikirim.',
+                ],
+                'whatsapp' => [
+                    'status' => 'failed',
+                    'message' => 'WhatsApp gagal dikirim.',
+                ],
+            ];
+        }
+    }
+
+    /** @param array<string, array{status?:string}> $delivery */
+    private function anyChannelSent(array $delivery): bool
+    {
+        return ($delivery['email']['status'] ?? null) === 'sent'
+            || ($delivery['whatsapp']['status'] ?? null) === 'sent';
     }
 
     /**
@@ -256,6 +334,8 @@ class UserController extends Controller
     ): JsonResponse {
         Gate::authorize('update', $user);
 
+        $this->normalizePhoneInput($request);
+
         $validated = $request->validate([
             'name' => [
                 'sometimes',
@@ -281,7 +361,7 @@ class UserController extends Controller
                 'nullable',
                 'string',
                 'max:30',
-                'regex:'.self::PHONE_REGEX,
+                'regex:'.PhoneNumber::REGEX,
             ],
             'password' => [
                 'sometimes',

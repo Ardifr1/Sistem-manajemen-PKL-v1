@@ -357,7 +357,9 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
       setError("Nama dan email wajib diisi.");
       return;
     }
-    if (form.phone.trim() && !/^(\+62|62|0)8[0-9]{7,12}$/.test(form.phone.trim())) {
+    // Terima spasi/strip seperti "0812-3456-7890"; backend menormalkan ke 628….
+    const phoneDigits = form.phone.trim().replace(/[\s\-().]/g, "");
+    if (phoneDigits && !/^(\+62|62|0)8[0-9]{7,12}$/.test(phoneDigits)) {
       setError("Format nomor HP tidak valid (contoh: 081234567890).");
       return;
     }
@@ -371,7 +373,7 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
       const payload = {
         name: form.name.trim(),
         email: form.email.trim(),
-        phone: form.phone.trim() || null,
+        phone: form.phone.trim().replace(/[\s\-().]/g, "") || null,
         role: form.role,
         is_active: form.is_active,
       };
