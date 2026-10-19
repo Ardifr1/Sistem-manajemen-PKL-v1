@@ -74,10 +74,10 @@ function MembershipForm({ companyId, accounts, busy, onSave }) {
 function CompanyForm({ initial, onCancel, onSaved }) {
   const [form, setForm] = useState({
     name: initial?.name || "",
-    // `industry` dan `student_quota` WAJIB dikirim saat membuat perusahaan
-    // (divalidasi backend); perusahaan tetap boleh memperbaruinya sendiri.
+    // `industry` WAJIB dikirim saat membuat perusahaan (divalidasi backend).
+    // `student_quota` TIDAK diisi admin — hanya perusahaan yang mengaturnya
+    // lewat menu Profil Perusahaan. Saat tambah baru dikirim 0 sebagai default.
     industry: initial?.industry || "",
-    student_quota: initial?.student_quota ?? 0,
     is_active: initial ? !!initial.is_active : true,
   });
   const [saving, setSaving] = useState(false);
@@ -96,20 +96,19 @@ function CompanyForm({ initial, onCancel, onSaved }) {
       setError("Bidang usaha wajib diisi.");
       return;
     }
-    if (Number(form.student_quota) < 0 || Number.isNaN(Number(form.student_quota))) {
-      setError("Kuota siswa harus berupa angka 0 atau lebih.");
-      return;
-    }
     setSaving(true);
     try {
       const payload = {
         name: form.name.trim(),
         industry: String(form.industry).trim(),
-        student_quota: Number(form.student_quota) || 0,
         is_active: form.is_active,
       };
-      if (initial?.id) await companiesApi.update(initial.id, payload);
-      else await companiesApi.store(payload);
+      if (initial?.id) {
+        await companiesApi.update(initial.id, payload);
+      } else {
+        // Kuota awal 0; perusahaan mengisi sendiri kuota yang tersedia.
+        await companiesApi.store({ ...payload, student_quota: 0 });
+      }
       onSaved?.();
     } catch (err) {
       setError(err?.message || "Gagal menyimpan perusahaan.");
@@ -129,18 +128,9 @@ function CompanyForm({ initial, onCancel, onSaved }) {
         <span>Bidang Usaha</span>
         <input value={form.industry} onChange={set("industry")} placeholder="cth Teknologi Informasi" />
       </label>
-      <label className="zip-field">
-        <span>Kuota Siswa</span>
-        <input
-          type="number"
-          min="0"
-          value={form.student_quota}
-          onChange={(e) => setForm((f) => ({ ...f, student_quota: e.target.value }))}
-        />
-      </label>
       <div className="zip-info-box" style={{ marginBottom: 4 }}>
         <i className="fa-solid fa-circle-info"></i>
-        <span>Nilai awal ini dapat diperbarui sendiri oleh perusahaan lewat menu Profil Perusahaan.</span>
+        <span>Kuota siswa diatur sendiri oleh perusahaan lewat menu Profil Perusahaan.</span>
       </div>
       <label className="zip-field">
         <span>Status</span>
@@ -389,7 +379,7 @@ function PerusahaanPartner({ onMeta }) {
           className="zip-btn zip-btn-primary"
           onClick={() => {
             setView({ name: "tambah" });
-            onMeta?.({ title: "Tambah Perusahaan", subtitle: "Nama • bidang • kuota • status" });
+            onMeta?.({ title: "Tambah Perusahaan", subtitle: "Nama • bidang • status" });
           }}
         >
           + Tambah Perusahaan
@@ -474,7 +464,7 @@ function PerusahaanPartner({ onMeta }) {
               </span>
               <span className="zip-row-actions" style={{ display: "flex", gap: 8 }}>
                 <button type="button" className="zip-act zip-act-detail" onClick={() => { setView({ name: "detail", row: c }); onMeta?.({ title: `Detail — ${c.name}`, subtitle: "Profil • kuota • siswa" }); }}>Detail</button>
-                <button type="button" className="zip-act zip-act-edit" onClick={() => { setView({ name: "edit", row: c }); onMeta?.({ title: "Edit Perusahaan", subtitle: "Nama • bidang • kuota • status" }); }}>Edit</button>
+                <button type="button" className="zip-act zip-act-edit" onClick={() => { setView({ name: "edit", row: c }); onMeta?.({ title: "Edit Perusahaan", subtitle: "Nama • bidang • status" }); }}>Edit</button>
                 <button type="button" className="zip-act zip-act-hapus" onClick={() => { setView({ name: "hapus", row: c }); onMeta?.({ title: "Konfirmasi Hapus", subtitle: "Aksi berisiko • butuh konfirmasi" }); }}>Hapus</button>
               </span>
             </div>
