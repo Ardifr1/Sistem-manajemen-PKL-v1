@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\PklApplication;
 use App\Models\PklPlacement;
+use App\Support\PlacementQuota;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +18,14 @@ class PklPlacementController extends Controller
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', PklPlacement::class);
+
+        // Aktivasi otomatis: penempatan berstatus `scheduled` yang tanggal
+        // mulainya telah tiba menjadi `active`. Pola lazy seperti penutupan
+        // periode otomatis — dievaluasi setiap daftar dibuka.
+        PklPlacement::query()
+            ->where('status', 'scheduled')
+            ->whereDate('start_date', '<=', now()->toDateString())
+            ->update(['status' => 'active']);
 
         $validated = $request->validate([
             'pkl_period_id' => [
@@ -139,7 +148,7 @@ class PklPlacementController extends Controller
                 'required',
                 'string',
                 'max:50',
-                'in:active,completed,cancelled',
+                'in:active,completed,cancelled,scheduled',
             ],
         ]);
 
@@ -207,7 +216,7 @@ class PklPlacementController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            $quotaError = $this->quotaErrorMessage($lockedCompany, (int) $validated['pkl_period_id'], null);
+            $quotaError = PlacementQuota::errorMessage($lockedCompany, (int) $validated['pkl_period_id'], null);
 
             if ($quotaError !== null) {
                 return ['error' => $quotaError];
@@ -312,7 +321,7 @@ class PklPlacementController extends Controller
                 'sometimes',
                 'string',
                 'max:50',
-                'in:active,completed,cancelled',
+                'in:active,completed,cancelled,scheduled',
             ],
         ]);
 
@@ -341,7 +350,7 @@ class PklPlacementController extends Controller
                 ], 422);
             }
 
-            $quotaError = $this->quotaErrorMessage(
+            $quotaError = PlacementQuota::errorMessage(
                 $newCompany,
                 (int) ($validated['pkl_period_id'] ?? $pklPlacement->pkl_period_id),
                 (int) $pklPlacement->id
@@ -385,35 +394,5 @@ class PklPlacementController extends Controller
         return response()->json([
             'message' => 'Penempatan PKL berhasil dihapus.',
         ]);
-    }
-
-    /**
-     * Pesan kesalahan bila kuota perusahaan untuk periode PKL terkait sudah
-     * penuh, atau null bila penempatan masih diperbolehkan.
-     *
-     * Penempatan berstatus `cancelled` tidak dihitung sebagai penggunaan
-     * kuota. Harus dipanggil di dalam transaksi dengan baris company terkunci
-     * (lockForUpdate) agar aman dari kondisi balapan.
-     */
-    private function quotaErrorMessage(Company $company, int $periodId, ?int $ignorePlacementId): ?string
-    {
-        $quota = (int) $company->student_quota;
-
-        if ($quota <= 0) {
-            return 'Perusahaan tidak memiliki kuota siswa.';
-        }
-
-        $used = PklPlacement::query()
-            ->where('company_id', $company->id)
-            ->where('pkl_period_id', $periodId)
-            ->where('status', '!=', 'cancelled')
-            ->when($ignorePlacementId !== null, fn ($q) => $q->where('id', '!=', $ignorePlacementId))
-            ->count();
-
-        if ($used >= $quota) {
-            return 'Kuota siswa untuk perusahaan pada periode PKL ini sudah penuh.';
-        }
-
-        return null;
     }
 }

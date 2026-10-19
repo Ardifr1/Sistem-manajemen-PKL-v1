@@ -272,10 +272,11 @@ export function PilihFinal({ onMeta }) {
     setSaving(true);
     setErr("");
     try {
-      // Backend menutup tawaran lain pada periode yang sama sehingga siswa
-      // benar-benar hanya berada di satu perusahaan (bukan hanya di UI).
-      await applicationsApi.choose(dipilih);
-      setDone(true);
+      // Backend otomatis membuat penempatan resmi + menutup tawaran lain
+      // pada periode yang sama sehingga siswa benar-benar hanya berada di
+      // satu perusahaan (bukan hanya di UI).
+      const res = await applicationsApi.choose(dipilih);
+      setDone(res?.placement || true);
       setConfirm(false);
     } catch (e) {
       setErr(e?.message || "Gagal menyimpan pilihan final.");
@@ -286,15 +287,22 @@ export function PilihFinal({ onMeta }) {
   if (loading) return <p className="siswa-muted">Memuat…</p>;
 
   if (done) {
+    const placement = done === true ? null : done;
+    const scheduled = placement?.status === "scheduled";
+    const startDate = placement?.start_date
+      ? new Date(placement.start_date).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
+      : null;
     return (
       <div className="siswa-card" style={{ textAlign: "center", padding: "48px 24px" }}>
         <span className="siswa-modal-ic green" style={{ margin: "0 auto 16px" }}>
           <i className="fa-solid fa-check"></i>
         </span>
-        <h3 className="siswa-card-title" style={{ marginBottom: 8 }}>Pilihan Final Tersimpan!</h3>
+        <h3 className="siswa-card-title" style={{ marginBottom: 8 }}>Penempatan Resmi Dibuat!</h3>
         <p className="siswa-muted" style={{ marginBottom: 20 }}>
           Kamu memilih <b style={{ color: "#0f172a" }}>{co(apps.find((a) => a.id === dipilih)?.company_id)?.name}</b> sebagai
-          tempat PKL. Sekolah akan memproses penempatanmu.
+          tempat PKL. {scheduled && startDate
+            ? <>Penempatanmu resmi tercatat dan PKL akan aktif pada <b style={{ color: "#0f172a" }}>{startDate}</b>.</>
+            : "PKL kamu sudah aktif."}
         </p>
         <button type="button" className="siswa-btn siswa-btn-primary" onClick={() => navigate("/siswa")}>
           Kembali ke Dashboard

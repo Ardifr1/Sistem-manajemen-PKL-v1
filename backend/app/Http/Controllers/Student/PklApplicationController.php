@@ -7,7 +7,10 @@ use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\PklApplication;
 use App\Models\PklPeriod;
+use App\Models\PklPlacement;
 use App\Policies\Concerns\BlocksCompanyConflict;
+use App\Support\PlacementQuota;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -184,9 +187,13 @@ class PklApplicationController extends Controller
 
     /**
      * Pilihan final siswa: bila diterima beberapa perusahaan, siswa memilih
-     * SATU tujuan PKL. Tawaran lain pada periode yang sama ditutup (rejected)
-     * agar siswa hanya berada pada satu perusahaan dan kuota perusahaan lain
-     * terbebas kembali.
+     * SATU tujuan PKL. Saat pilihan valid, sistem OTOMATIS membuat penempatan
+     * resmi (tanpa persetujuan admin) dan menutup tawaran lain pada periode
+     * yang sama agar siswa hanya berada pada satu perusahaan.
+     *
+     * Seluruh operasi berjalan dalam satu transaksi: penutupan tawaran,
+     * pembuatan penempatan, dan pemeriksaan kuota (dengan baris perusahaan
+     * terkunci) konsisten sekaligus.
      */
     public function choose(
         Request $request,
@@ -200,41 +207,147 @@ class PklApplicationController extends Controller
             ], 422);
         }
 
-        $closedOffers = DB::transaction(function () use ($pklApplication, $request) {
-            $closedOffers = PklApplication::query()
-                ->where('student_id', $pklApplication->student_id)
-                ->where('pkl_period_id', $pklApplication->pkl_period_id)
-                ->where('status', 'accepted')
-                ->where('id', '!=', $pklApplication->id)
-                ->update(['status' => 'rejected']);
+        $company = Company::findOrFail($pklApplication->company_id);
+        $period = PklPeriod::findOrFail($pklApplication->pkl_period_id);
 
-            if ($closedOffers > 0) {
+        // Perusahaan nonmitra / belum diverifikasi / nonaktif tidak boleh
+        // dipakai untuk penempatan resmi (PRD bagian D).
+        if (! $company->isUsableForPlacement()) {
+            return response()->json([
+                'message' => 'Perusahaan belum terverifikasi sebagai mitra aktif sehingga tidak dapat dipakai untuk penempatan.',
+            ], 422);
+        }
+
+        if (! $period->is_active) {
+            return response()->json([
+                'message' => 'Periode PKL tersebut tidak sedang aktif.',
+            ], 422);
+        }
+
+        try {
+            $result = DB::transaction(function () use ($pklApplication, $company, $period, $request) {
+                // Idempotensi: siswa sudah punya penempatan di periode ini
+                // (mis. klik ganda) — jangan buat lagi.
+                $alreadyPlaced = PklPlacement::query()
+                    ->where('student_id', $pklApplication->student_id)
+                    ->where('pkl_period_id', $pklApplication->pkl_period_id)
+                    ->exists();
+
+                if ($alreadyPlaced) {
+                    return ['error' => 'Penempatan sudah dibuat sebelumnya.'];
+                }
+
+                // Kunci baris perusahaan + cek kuota sebelum mengubah apa pun.
+                $lockedCompany = Company::query()
+                    ->whereKey($company->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                $quotaError = PlacementQuota::errorMessage(
+                    $lockedCompany,
+                    (int) $pklApplication->pkl_period_id
+                );
+
+                if ($quotaError !== null) {
+                    return ['error' => $quotaError];
+                }
+
+                // Tutup tawaran diterima lainnya pada periode yang sama.
+                $closedOffers = PklApplication::query()
+                    ->where('student_id', $pklApplication->student_id)
+                    ->where('pkl_period_id', $pklApplication->pkl_period_id)
+                    ->where('status', 'accepted')
+                    ->where('id', '!=', $pklApplication->id)
+                    ->update(['status' => 'rejected']);
+
+                // Buat penempatan resmi otomatis. Status `scheduled` bila
+                // tanggal mulai belum tiba; aktif otomatis saat tanggal mulai
+                // tiba (dievaluasi lazy saat daftar penempatan dibuka).
+                $today = now()->toDateString();
+                $placement = PklPlacement::create([
+                    'student_id' => $pklApplication->student_id,
+                    'company_id' => $pklApplication->company_id,
+                    'pkl_period_id' => $pklApplication->pkl_period_id,
+                    'application_id' => $pklApplication->id,
+                    'start_date' => $period->start_date,
+                    'end_date' => $period->end_date,
+                    'status' => $period->start_date->toDateString() <= $today ? 'active' : 'scheduled',
+                ]);
+
+                // Tandai lamaran terpilih selesai diproses.
+                $pklApplication->update(['status' => 'approved']);
+
                 AuditLog::create([
                     'user_id' => $request->user()->id,
-                    'action' => 'application_offers_closed',
-                    'subject_type' => PklApplication::class,
-                    'subject_id' => $pklApplication->id,
-                    'new_status' => 'rejected',
-                    'reason' => 'Siswa memilih satu perusahaan; tawaran lain ditutup.',
+                    'action' => 'placement.auto_created',
+                    'subject_type' => PklPlacement::class,
+                    'subject_id' => $placement->id,
+                    'placement_id' => $placement->id,
+                    'new_status' => $placement->status,
+                    'reason' => 'Siswa memilih tawaran; penempatan resmi dibuat otomatis.',
                     'metadata' => [
                         'student_id' => (int) $pklApplication->student_id,
+                        'company_id' => (int) $pklApplication->company_id,
                         'pkl_period_id' => (int) $pklApplication->pkl_period_id,
-                        'chosen_application_id' => (int) $pklApplication->id,
-                        'closed_count' => $closedOffers,
+                        'application_id' => (int) $pklApplication->id,
                     ],
                 ]);
+
+                if ($closedOffers > 0) {
+                    AuditLog::create([
+                        'user_id' => $request->user()->id,
+                        'action' => 'application_offers_closed',
+                        'subject_type' => PklApplication::class,
+                        'subject_id' => $pklApplication->id,
+                        'new_status' => 'rejected',
+                        'reason' => 'Siswa memilih satu perusahaan; tawaran lain ditutup.',
+                        'metadata' => [
+                            'student_id' => (int) $pklApplication->student_id,
+                            'pkl_period_id' => (int) $pklApplication->pkl_period_id,
+                            'chosen_application_id' => (int) $pklApplication->id,
+                            'closed_count' => $closedOffers,
+                        ],
+                    ]);
+                }
+
+                return [
+                    'placement' => $placement,
+                    'closed_offers' => $closedOffers,
+                ];
+            });
+        } catch (QueryException $e) {
+            // Unique constraint (student_id, pkl_period_id): request bersamaan
+            // atau klik ganda — anggap sudah ditempatkan.
+            if ($e->getCode() === '23000') {
+                return response()->json([
+                    'message' => 'Penempatan sudah dibuat sebelumnya.',
+                ], 422);
             }
 
-            return $closedOffers;
-        });
+            throw $e;
+        }
 
+        if (isset($result['error'])) {
+            return response()->json([
+                'message' => $result['error'],
+            ], 422);
+        }
+
+        /** @var PklPlacement $placement */
+        $placement = $result['placement'];
+        $closedOffers = $result['closed_offers'];
+
+        $placement->load(['company', 'pklPeriod']);
         $pklApplication->load(['company', 'pklPeriod']);
 
+        $scheduled = $placement->status === 'scheduled';
+
         return response()->json([
-            'message' => $closedOffers > 0
-                ? 'Pilihan final tersimpan. Tawaran lain ditutup dan pengajuan menunggu proses penempatan sekolah.'
-                : 'Pilihan final tersimpan. Pengajuan menunggu proses penempatan sekolah.',
+            'message' => $scheduled
+                ? 'Pilihan final tersimpan dan penempatan resmi dibuat. PKL akan aktif pada tanggal mulai periode.'
+                : 'Pilihan final tersimpan dan penempatan resmi dibuat. PKL kamu sudah aktif.',
             'data' => $pklApplication,
+            'placement' => $placement,
             'closed_offers' => $closedOffers,
         ]);
     }

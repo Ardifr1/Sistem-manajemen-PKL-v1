@@ -113,19 +113,30 @@ class BusinessLogicTest extends TestCase
 
         Sanctum::actingAs($student);
 
-        $this->postJson("/api/pkl-applications/{$applicationA->id}/choose")
+        $response = $this->postJson("/api/pkl-applications/{$applicationA->id}/choose")
             ->assertOk()
             ->assertJsonPath('closed_offers', 1);
 
+        // Lamaran terpilih selesai diproses; tawaran lain ditutup.
         $this->assertDatabaseHas('pkl_applications', [
             'id' => $applicationA->id,
-            'status' => 'accepted',
+            'status' => 'approved',
         ]);
         $this->assertDatabaseHas('pkl_applications', [
             'id' => $applicationB->id,
             'status' => 'rejected',
         ]);
         $this->assertDatabaseHas('audit_logs', ['action' => 'application_offers_closed']);
+
+        // Penempatan resmi dibuat OTOMATIS tanpa persetujuan admin.
+        $this->assertDatabaseHas('pkl_placements', [
+            'student_id' => $student->id,
+            'company_id' => $companyA->id,
+            'pkl_period_id' => $period->id,
+            'application_id' => $applicationA->id,
+        ]);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'placement.auto_created']);
+        $this->assertNotNull($response->json('placement.id'));
     }
 
     public function test_student_cannot_choose_application_of_another_student(): void
@@ -155,6 +166,98 @@ class BusinessLogicTest extends TestCase
 
         $this->postJson("/api/pkl-applications/{$application->id}/choose")
             ->assertStatus(422);
+    }
+
+    public function test_choose_creates_scheduled_placement_when_period_not_started(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $period = $this->createPeriod('PKL Masa Depan');
+        $period->update([
+            'start_date' => now()->addMonth()->toDateString(),
+            'end_date' => now()->addMonths(4)->toDateString(),
+        ]);
+        $company = $this->createCompany();
+        $application = $this->makeApplicationFor($student, $company, $period);
+        $application->update(['status' => 'accepted']);
+
+        Sanctum::actingAs($student);
+
+        $response = $this->postJson("/api/pkl-applications/{$application->id}/choose")->assertOk();
+
+        // Tercatat resmi, tetapi belum aktif sebelum tanggal mulai.
+        $this->assertSame('scheduled', $response->json('placement.status'));
+        $this->assertDatabaseHas('pkl_placements', [
+            'student_id' => $student->id,
+            'company_id' => $company->id,
+            'status' => 'scheduled',
+        ]);
+    }
+
+    public function test_choose_twice_does_not_create_duplicate_placement(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $application = $this->makeApplicationFor($student, $company, $period);
+        $application->update(['status' => 'accepted']);
+
+        Sanctum::actingAs($student);
+
+        $this->postJson("/api/pkl-applications/{$application->id}/choose")->assertOk();
+        // Klik kedua: lamaran sudah approved (bukan accepted) -> ditolak.
+        $this->postJson("/api/pkl-applications/{$application->id}/choose")->assertStatus(422);
+
+        $this->assertSame(1, \App\Models\PklPlacement::query()
+            ->where('student_id', $student->id)
+            ->where('pkl_period_id', $period->id)
+            ->count());
+    }
+
+    public function test_choose_fails_when_company_quota_is_full(): void
+    {
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $company->update(['student_quota' => 1]);
+
+        // Kuota sudah terpakai siswa lain.
+        $this->createPlacement($studentB, $company, $period);
+
+        $application = $this->makeApplicationFor($studentA, $company, $period);
+        $application->update(['status' => 'accepted']);
+
+        Sanctum::actingAs($studentA);
+
+        $this->postJson("/api/pkl-applications/{$application->id}/choose")
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Kuota siswa untuk perusahaan pada periode PKL ini sudah penuh.');
+
+        // Tidak ada penempatan; lamaran tetap accepted (bisa dicoba lagi nanti).
+        $this->assertDatabaseMissing('pkl_placements', [
+            'student_id' => $studentA->id,
+            'pkl_period_id' => $period->id,
+        ]);
+        $this->assertSame('accepted', $application->fresh()->status);
+    }
+
+    public function test_choose_fails_for_non_partner_company(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $company->update(['verification_status' => \App\Models\Company::VERIFICATION_PENDING]);
+        $application = $this->makeApplicationFor($student, $company, $period);
+        $application->update(['status' => 'accepted']);
+
+        Sanctum::actingAs($student);
+
+        $this->postJson("/api/pkl-applications/{$application->id}/choose")->assertStatus(422);
+
+        $this->assertDatabaseMissing('pkl_placements', [
+            'student_id' => $student->id,
+            'pkl_period_id' => $period->id,
+        ]);
     }
 
     // ===================== REVIEW =====================

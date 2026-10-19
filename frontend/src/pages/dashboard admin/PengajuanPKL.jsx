@@ -65,7 +65,7 @@ function Persetujuan({ onMeta }) {
 
   useEffect(() => {
     load();
-    onMeta?.({ title: "Persetujuan Penempatan", subtitle: "Pengesahan sekolah atas penerimaan perusahaan" });
+    onMeta?.({ title: "Monitoring Penempatan", subtitle: "Pantau penempatan resmi yang dibuat otomatis" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -77,6 +77,7 @@ function Persetujuan({ onMeta }) {
       try {
         const periodRes = await periodsApi.show(row.pkl_period_id);
         const p = periodRes.data || {};
+        const today = new Date().toISOString().slice(0, 10);
         await placementsApi.store({
           student_id: row.student_id,
           company_id: row.company_id,
@@ -84,7 +85,7 @@ function Persetujuan({ onMeta }) {
           application_id: row.id,
           start_date: p.start_date,
           end_date: p.end_date,
-          status: "active",
+          status: p.start_date && p.start_date <= today ? "active" : "scheduled",
         });
       } catch (e) {
         setError(e?.message || "Lamaran disetujui, tetapi penempatan resmi gagal dibuat.");
@@ -120,8 +121,8 @@ function Persetujuan({ onMeta }) {
             <i className="fa-solid fa-triangle-exclamation"></i>
           </span>
           <div>
-            <strong>{rows.length} penempatan menunggu persetujuan sekolah.</strong>{" "}
-            Penerimaan perusahaan belum resmi sebelum disetujui di sini.
+            <strong>{rows.length} lamaran diterima menunggu pilihan final siswa.</strong>{" "}
+            Penempatan resmi dibuat otomatis saat siswa memilih tawaran — tanpa persetujuan admin.
           </div>
         </div>
       )}
@@ -193,7 +194,7 @@ function Persetujuan({ onMeta }) {
         )}
 
         <div className="zip-note" style={{ marginTop: 14, marginBottom: 0 }}>
-          ℹ️ Penempatan resmi diterbitkan otomatis setelah disetujui — siswa, guru pembimbing, dan pembimbing industri langsung terhubung.
+          ℹ️ Penempatan resmi dibuat otomatis saat siswa memilih tawaran — siswa, guru pembimbing, dan pembimbing industri langsung terhubung. Tombol Setujui/Tolak di sini hanya untuk kasus khusus (mis. pilihan final siswa gagal diproses).
         </div>
       </div>
     </div>

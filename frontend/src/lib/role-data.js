@@ -91,6 +91,7 @@ export const STATUS_LABEL = {
   verified: "Disetujui",
   needs_revision: "Revisi",
   active: "AKTIF",
+  scheduled: "TERJADWAL",
   completed: "SELESAI",
   cancelled: "Batal",
 };
