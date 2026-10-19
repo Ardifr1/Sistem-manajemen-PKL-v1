@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { applicationsApi, placementsApi, usersApi, companiesApi, periodsApi, profilesApi } from "../../api/index.js";
+import { applicationsApi, usersApi, companiesApi, profilesApi } from "../../api/index.js";
 import { SkelCards } from "../../components/role/skeleton.jsx";
 import "./admin-pages.css";
 
@@ -22,7 +22,6 @@ function Persetujuan({ onMeta }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [acting, setActing] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -69,48 +68,6 @@ function Persetujuan({ onMeta }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const setujui = async (row) => {
-    setActing(row.id);
-    setError("");
-    try {
-      await applicationsApi.update(row.id, { status: "approved" });
-      try {
-        const periodRes = await periodsApi.show(row.pkl_period_id);
-        const p = periodRes.data || {};
-        const today = new Date().toISOString().slice(0, 10);
-        await placementsApi.store({
-          student_id: row.student_id,
-          company_id: row.company_id,
-          pkl_period_id: row.pkl_period_id,
-          application_id: row.id,
-          start_date: p.start_date,
-          end_date: p.end_date,
-          status: p.start_date && p.start_date <= today ? "active" : "scheduled",
-        });
-      } catch (e) {
-        setError(e?.message || "Lamaran disetujui, tetapi penempatan resmi gagal dibuat.");
-      }
-      load();
-    } catch (err) {
-      setError(err?.message || "Gagal menyetujui lamaran.");
-    } finally {
-      setActing(null);
-    }
-  };
-
-  const tolak = async (row) => {
-    setActing(row.id);
-    setError("");
-    try {
-      await applicationsApi.update(row.id, { status: "rejected" });
-      load();
-    } catch (err) {
-      setError(err?.message || "Gagal menolak lamaran.");
-    } finally {
-      setActing(null);
-    }
-  };
-
   return (
     <div className="zip-page">
       {error && <div className="zip-error">{error}</div>}
@@ -130,8 +87,8 @@ function Persetujuan({ onMeta }) {
       <div className="zip-card" style={{ maxWidth: "none" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
           <div>
-            <h3 className="zip-card-title" style={{ margin: 0 }}>Antrean Persetujuan</h3>
-            <div className="zip-sub">Diurutkan dari yang paling lama menunggu</div>
+            <h3 className="zip-card-title" style={{ margin: 0 }}>Lamaran Diterima Perusahaan</h3>
+            <div className="zip-sub">Menunggu pilihan final siswa — penempatan dibuat otomatis</div>
           </div>
           {rows.length > 0 && <span className="zip-badge b-amber">● {rows.length} menunggu</span>}
         </div>
@@ -139,7 +96,7 @@ function Persetujuan({ onMeta }) {
         {loading ? (
           <SkelCards n={3} />
         ) : rows.length === 0 ? (
-          <p className="zip-muted">Tidak ada lamaran yang menunggu persetujuan sekolah.</p>
+          <p className="zip-muted">Tidak ada lamaran diterima yang menunggu pilihan siswa.</p>
         ) : (
           <div className="zip-table-wrap" style={{ boxShadow: "none" }}>
             <table className="zip-table">
@@ -149,7 +106,6 @@ function Persetujuan({ onMeta }) {
                   <th>Perusahaan</th>
                   <th>Tgl Diterima</th>
                   <th>Guru Pembimbing</th>
-                  <th style={{ textAlign: "right" }}>Aksi</th>
                 </tr>
               </thead>
               <tbody>
@@ -167,25 +123,6 @@ function Persetujuan({ onMeta }) {
                     <td>{r.perusahaan}</td>
                     <td><span className="zip-sub">{r.tglDiterima}</span></td>
                     <td><span className="zip-sub">{r.guru}</span></td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button
-                        type="button"
-                        className="zip-act zip-act-setujui"
-                        style={{ marginRight: 8 }}
-                        disabled={acting === r.id}
-                        onClick={() => setujui(r)}
-                      >
-                        {acting === r.id ? "Memproses…" : "Setujui"}
-                      </button>
-                      <button
-                        type="button"
-                        className="zip-act zip-act-hapus"
-                        disabled={acting === r.id}
-                        onClick={() => tolak(r)}
-                      >
-                        Tolak
-                      </button>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -194,7 +131,7 @@ function Persetujuan({ onMeta }) {
         )}
 
         <div className="zip-note" style={{ marginTop: 14, marginBottom: 0 }}>
-          ℹ️ Penempatan resmi dibuat otomatis saat siswa memilih tawaran — siswa, guru pembimbing, dan pembimbing industri langsung terhubung. Tombol Setujui/Tolak di sini hanya untuk kasus khusus (mis. pilihan final siswa gagal diproses).
+          ℹ️ Penempatan resmi dibuat otomatis saat siswa memilih tawaran — siswa, guru pembimbing, dan pembimbing industri langsung terhubung.
         </div>
       </div>
     </div>
