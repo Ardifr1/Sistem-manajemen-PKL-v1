@@ -9,6 +9,8 @@ import {
   placementsApi,
   assessmentsApi,
   usersApi,
+  companyProposalsApi,
+  interviewsApi,
 } from "../api/index.js";
 import {
   getEnrichedPlacements,
@@ -52,6 +54,32 @@ async function studentNotifs({ placement } = {}) {
       tone: decided.status === "rejected" ? "red" : "green",
       text: `Pengajuan ke ${co} ${decided.status === "rejected" ? "ditolak" : "diterima"}`,
       time: "Pengajuan PKL",
+      to: "pengajuan",
+    });
+  }
+  const proposals = await safe(() => companyProposalsApi.index().then(arr));
+  const proposalDecided = proposals
+    .filter((p) => ["verified", "rejected"].includes(p.verification_status))
+    .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))[0];
+  if (proposalDecided) {
+    const ok = proposalDecided.verification_status === "verified";
+    out.push({
+      icon: ok ? "fa-circle-check" : "fa-circle-xmark",
+      tone: ok ? "green" : "red",
+      text: `Pengajuan ${proposalDecided.name || "perusahaan"} ${ok ? "diverifikasi sekolah" : "ditolak sekolah"}`,
+      time: "Perusahaan nonmitra",
+      to: "pilih",
+    });
+  }
+  const interviews = await safe(() => interviewsApi.index({ status: "scheduled" }).then(arr));
+  if (interviews.length) {
+    const iv = interviews[0];
+    const co = iv.application?.company?.name || iv.company?.name || "perusahaan";
+    out.push({
+      icon: "fa-handshake",
+      tone: "blue",
+      text: `${interviews.length} interview dijadwalkan (${co})`,
+      time: "Cek jadwal interview",
       to: "pengajuan",
     });
   }
@@ -178,6 +206,16 @@ async function adminNotifs() {
       text: `${pending.length} pengajuan menunggu persetujuan`,
       time: "Persetujuan PKL",
         to: "persetujuan",
+    });
+  }
+  const proposals = await safe(() => companyProposalsApi.index({ verification_status: "pending_school_verification" }).then(arr));
+  if (proposals.length) {
+    out.push({
+      icon: "fa-building-circle-check",
+      tone: "blue",
+      text: `${proposals.length} pengajuan perusahaan menunggu verifikasi`,
+      time: "Perusahaan Partner",
+      to: "perusahaan",
     });
   }
   const journals = await safe(() => journalsApi.index().then(arr));
