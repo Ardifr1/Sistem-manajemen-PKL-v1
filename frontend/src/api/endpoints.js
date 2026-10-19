@@ -16,6 +16,7 @@ export const ep = {
     logout: "/logout",
     forgotPassword: "/forgot-password",
     setPassword: "/set-password",
+    changePassword: "/change-password",
   },
   companies: {
     index: "/companies",

@@ -47,6 +47,7 @@ class AuthController extends Controller
                     'username' => $user->username,
                     'email' => $user->email,
                     'role' => $user->role,
+                    'must_change_password' => (bool) $user->must_change_password,
                 ],
             ],
         ]);
@@ -93,11 +94,43 @@ class AuthController extends Controller
             'password' => $validated['password'],
             'password_setup_token' => null,
             'password_setup_expires_at' => null,
+            'must_change_password' => false,
+            'activated_at' => now(),
             'is_active' => true,
         ]);
 
         return response()->json([
             'message' => 'Password berhasil diatur. Silakan masuk menggunakan email Anda.',
+        ]);
+    }
+
+    /**
+     * Ganti password oleh pengguna yang sedang login.
+     * Dipakai untuk kewajiban ganti password setelah login pertama
+     * (akun yang password awalnya ditetapkan admin).
+     */
+    public function changePassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8'],
+        ]);
+
+        $user = $request->user();
+
+        if (! Hash::check($validated['current_password'], $user->password)) {
+            return response()->json([
+                'message' => 'Password saat ini salah.',
+            ], 422);
+        }
+
+        $user->update([
+            'password' => $validated['password'],
+            'must_change_password' => false,
+        ]);
+
+        return response()->json([
+            'message' => 'Password berhasil diganti.',
         ]);
     }
 

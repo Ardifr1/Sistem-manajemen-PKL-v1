@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { usersApi, journalsApi, applicationsApi, placementsApi, profilesApi, companiesApi, ROLE_LABEL } from "../../api/index.js";
+import { usersApi, journalsApi, applicationsApi, placementsApi, profilesApi, companiesApi, companyMembershipsApi, ROLE_LABEL } from "../../api/index.js";
 import { UserCell, RoleBadge, StatusBadge, initials, avatarColor } from "../../components/admin/user-table.jsx";
 import { SkelCards } from "../../components/role/skeleton.jsx";
 import "./admin-pages.css";
@@ -200,6 +200,149 @@ function DetailPengguna({ row, onBack, onEdit, onHapus, onMeta }) {
           </div>
         </div>
       </div>
+
+      <KeanggotaanPerusahaan userId={row.id} userRole={row.role} />
+    </div>
+  );
+}
+
+/**
+ * Kelola keanggotaan perusahaan eksplisit untuk satu pengguna (khusus admin).
+ * Peran utama pengguna TIDAK berubah — keanggotaan hanya membuka fungsi
+ * perusahaan sesuai kapabilitas yang dipilih.
+ */
+function KeanggotaanPerusahaan({ userId, userRole }) {
+  const [rows, setRows] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [companyId, setCompanyId] = useState("");
+  const [caps, setCaps] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [mRes, cRes] = await Promise.all([
+        companyMembershipsApi.index({ user_id: userId }).catch(() => ({ data: [] })),
+        companiesApi.index().catch(() => ({ data: [] })),
+      ]);
+      setRows(Array.isArray(mRes.data) ? mRes.data : []);
+      setCompanies(Array.isArray(cRes.data) ? cRes.data : []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [userId]);
+
+  const toggleCap = (v) => setCaps((c) => c.includes(v) ? c.filter((x) => x !== v) : [...c, v]);
+
+  const grant = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!companyId) { setError("Pilih perusahaan terlebih dahulu."); return; }
+    setSaving(true);
+    try {
+      await companyMembershipsApi.store({ user_id: userId, company_id: Number(companyId), capabilities: caps });
+      setCompanyId("");
+      setCaps([]);
+      await load();
+    } catch (err) {
+      setError(err?.message || "Gagal menambahkan keanggotaan.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleActive = async (m) => {
+    try {
+      await companyMembershipsApi.update(m.id, { status: m.status === "active" ? "inactive" : "active" });
+      await load();
+    } catch (err) {
+      setError(err?.message || "Gagal mengubah status.");
+    }
+  };
+
+  const revoke = async (m) => {
+    if (!window.confirm(`Cabut keanggotaan di ${m.company?.name || "perusahaan ini"}?`)) return;
+    try {
+      await companyMembershipsApi.destroy(m.id);
+      await load();
+    } catch (err) {
+      setError(err?.message || "Gagal mencabut keanggotaan.");
+    }
+  };
+
+  const capLabel = (v) => (companyMembershipsApi.CAPABILITIES || []).find((c) => c.value === v)?.label || v;
+
+  return (
+    <div className="zip-card" style={{ maxWidth: "none", marginTop: 16 }}>
+      <h3 className="zip-card-title" style={{ marginTop: 0 }}>
+        <i className="fa-solid fa-building" style={{ marginRight: 8 }}></i>
+        Keanggotaan Perusahaan
+      </h3>
+      <div className="zip-info-box" style={{ marginBottom: 12 }}>
+        <i className="fa-solid fa-circle-info"></i>
+        <span>
+          Peran utama tetap <strong>{roleLabel(userRole)}</strong>. Keanggotaan bersifat eksplisit:
+          tindakan sekolah terhadap perusahaan tersebut otomatis diblokir (hard block konflik kepentingan).
+        </span>
+      </div>
+      {error && <div className="zip-error">{error}</div>}
+      {loading ? (
+        <div className="zip-sub">Memuat…</div>
+      ) : rows.length === 0 ? (
+        <div className="zip-sub" style={{ marginBottom: 12 }}>Belum ada keanggotaan perusahaan.</div>
+      ) : (
+        <div style={{ marginBottom: 12 }}>
+          {rows.map((m) => (
+            <div key={m.id} className="zip-kv" style={{ alignItems: "center" }}>
+              <span>
+                <strong>{m.company?.name || `Perusahaan #${m.company_id}`}</strong>
+                <br />
+                <span className="zip-sub">{(m.capabilities || []).map(capLabel).join(", ") || "—"}</span>
+              </span>
+              <strong style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <StatusBadge active={m.status === "active"} />
+                <button type="button" className="zip-act zip-act-edit" onClick={() => toggleActive(m)}>
+                  {m.status === "active" ? "Nonaktifkan" : "Aktifkan"}
+                </button>
+                <button type="button" className="zip-act zip-act-hapus" onClick={() => revoke(m)}>Cabut</button>
+              </strong>
+            </div>
+          ))}
+        </div>
+      )}
+      <form onSubmit={grant}>
+        <div className="zip-cols2" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <label className="zip-field">
+            <span>Perusahaan</span>
+            <select value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+              <option value="">— Pilih perusahaan —</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="zip-field">
+            <span>Kapabilitas</span>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", paddingTop: 6 }}>
+              {(companyMembershipsApi.CAPABILITIES || []).map((c) => (
+                <label key={c.value} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+                  <input type="checkbox" checked={caps.includes(c.value)} onChange={() => toggleCap(c.value)} />
+                  {c.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="zip-form-actions">
+          <button type="submit" className="zip-btn-primary" disabled={saving}>
+            {saving ? "Menyimpan…" : "Tambah Keanggotaan"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

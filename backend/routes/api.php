@@ -33,6 +33,7 @@ Route::post('/set-password', [AuthController::class, 'setPassword']);
 Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/change-password', [AuthController::class, 'changePassword']);
 
     // Company
     Route::apiResource('companies', CompanyController::class);

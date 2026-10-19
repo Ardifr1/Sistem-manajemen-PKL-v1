@@ -59,6 +59,12 @@ export async function setPassword({ email, token, password } = {}) {
   return ok("Password berhasil diatur. Silakan masuk.", null);
 }
 
+export async function changePassword(current_password, password) {
+  await delay();
+  void current_password; void password;
+  return ok("Password berhasil diganti.", null);
+}
+
 export function currentUser() {
   try {
     return JSON.parse(localStorage.getItem("simagang_user") || "null");

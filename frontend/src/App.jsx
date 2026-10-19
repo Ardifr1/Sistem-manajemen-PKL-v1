@@ -7,6 +7,7 @@ import SiswaDashboard from "./pages/dashboard siswa/dashboard-siswa.jsx";
 import Login from "./pages/auth/login.jsx";
 import LupaPassword from "./pages/auth/lupa-password.jsx";
 import Aktivasi from "./pages/auth/aktivasi.jsx";
+import GantiPassword from "./pages/auth/ganti-password.jsx";
 import { authApi } from "./api/index.js";
 
 const TOKEN_KEY = "simagang_token";
@@ -43,6 +44,9 @@ function ProtectedRoute({ roles, children }) {
   const token = readToken();
   if (!user || !token) {
     return <Navigate to="/login" replace />;
+  }
+  if (user.must_change_password) {
+    return <Navigate to="/ganti-password" replace />;
   }
   if (roles && !roles.includes(user.role)) {
     return <Navigate to={ROLE_HOME[user.role] || "/login"} replace />;
@@ -86,6 +90,14 @@ function App() {
             <GuestRoute>
               <Aktivasi />
             </GuestRoute>
+          }
+        />
+        <Route
+          path="/ganti-password"
+          element={
+            <ProtectedRoute>
+              <GantiPassword />
+            </ProtectedRoute>
           }
         />
         <Route path="/" element={<RoleHome />} />

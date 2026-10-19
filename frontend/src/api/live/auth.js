@@ -54,6 +54,21 @@ export async function setPassword({ email, token, password, passwordConfirmation
   return res;
 }
 
+/** Ganti password oleh pengguna login (termasuk kewajiban setelah login pertama). */
+export async function changePassword(current_password, password) {
+  const res = await client.post(ep.auth.changePassword, { current_password, password });
+  try {
+    const u = currentUser();
+    if (u) {
+      u.must_change_password = false;
+      localStorage.setItem(USER_KEY, JSON.stringify(u));
+    }
+  } catch {
+    /* abaikan */
+  }
+  return res;
+}
+
 export function currentUser() {
   try {
     return JSON.parse(localStorage.getItem(USER_KEY) || "null");

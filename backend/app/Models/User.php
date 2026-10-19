@@ -25,6 +25,8 @@ use Laravel\Sanctum\HasApiTokens;
     'role',
     'school_id',
     'is_active',
+    'must_change_password',
+    'activated_at',
 ])]
 #[Hidden([
     'password',

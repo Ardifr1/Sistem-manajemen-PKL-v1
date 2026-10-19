@@ -258,4 +258,18 @@ trait ManagesPklTestData
             'finalized_at' => now(),
         ]);
     }
+
+    protected function attachCompanyMembership(
+        User $user,
+        Company $company,
+        array $capabilities = ['company_admin'],
+        bool $isActive = true
+    ): CompanyMembership {
+        return CompanyMembership::create([
+            'user_id' => $user->id,
+            'company_id' => $company->id,
+            'capabilities' => $capabilities,
+            'is_active' => $isActive,
+        ]);
+    }
 }

@@ -169,7 +169,10 @@ class UserController extends Controller
 
         if ($hasExplicitPassword) {
             // Cast 'hashed' pada model akan meng-hash nilainya.
+            // Pengguna wajib mengganti password ini setelah login pertama.
             $validated['password'] = $plainPassword;
+            $validated['must_change_password'] = true;
+            $validated['activated_at'] = now();
         } else {
             // Password acak yang tidak diketahui siapa pun + tautan aktivasi.
             $rawToken = Str::random(64);

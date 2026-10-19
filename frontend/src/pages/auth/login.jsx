@@ -27,8 +27,12 @@ function Login() {
     }
     setLoading(true);
     try {
-      await authApi.login({ email: login, password });
-      navigate("/", { replace: true });
+      const res = await authApi.login({ email: login, password });
+      if (res?.data?.user?.must_change_password) {
+        navigate("/ganti-password", { replace: true });
+      } else {
+        navigate("/", { replace: true });
+      }
     } catch (err) {
       setError(err?.message || "Email atau password salah. Coba lagi.");
     } finally {

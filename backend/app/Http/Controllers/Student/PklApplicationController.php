@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\PklApplication;
 use App\Models\PklPeriod;
+use App\Policies\Concerns\BlocksCompanyConflict;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,8 @@ use Illuminate\Support\Facades\Gate;
 
 class PklApplicationController extends Controller
 {
+    use BlocksCompanyConflict;
+
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', PklApplication::class);
@@ -254,6 +257,16 @@ class PklApplicationController extends Controller
                     'message' => 'Hanya lamaran berstatus diterima perusahaan yang dapat disetujui/ditolak sekolah.',
                 ], 422);
             }
+
+            // Hard Block: admin yang terhubung dengan perusahaan tujuan
+            // tidak boleh menyetujui/menolak dalam kapasitas sekolah.
+            $this->denyOnCompanyConflict(
+                $request->user(),
+                $pklApplication->company_id,
+                'application.approval',
+                $pklApplication,
+            );
+
             $validated = $request->validate([
                 'status' => ['required', 'string', 'in:approved,rejected'],
             ]);
