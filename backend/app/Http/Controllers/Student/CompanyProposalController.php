@@ -212,7 +212,9 @@ class CompanyProposalController extends Controller
         ) {
             $company->update([
                 'verification_status' => $newStatus,
-                'is_partner' => $approved,
+                // Perusahaan yang disetujui berstatus TERVERIFIKASI — bukan
+                // otomatis mitra. Status mitra hanya untuk kerjasama resmi
+                // dengan sekolah.
                 'is_active' => $approved,
                 'verification_note' => $validated['reason'] ?? null,
                 'verified_by' => $request->user()->id,

@@ -96,10 +96,11 @@ class PklApplicationController extends Controller
         $company = Company::findOrFail($validated['company_id']);
         $period = PklPeriod::findOrFail($validated['pkl_period_id']);
 
-        // Student hanya dapat memilih perusahaan partner yang aktif.
-        if (! $company->is_partner) {
+        // Siswa hanya dapat melamar ke perusahaan mitra atau nonmitra yang
+        // sudah terverifikasi sekolah.
+        if (! $company->is_partner && ! $company->isVerified()) {
             return response()->json([
-                'message' => 'Perusahaan harus berstatus partner.',
+                'message' => 'Perusahaan harus berstatus mitra atau terverifikasi sekolah.',
             ], 422);
         }
 

@@ -27,12 +27,15 @@ function PilihPerusahaan({ onMeta }) {
     onMeta?.({ title: "Pilih Perusahaan", subtitle: "Tentukan tempat PKL impianmu" });
     (async () => {
       try {
-        const [cRes, aRes, pRes] = await Promise.all([
+        const [cRes, vRes, aRes, pRes] = await Promise.all([
           companiesApi.index({ is_partner: true }).catch(() => ({ data: [] })),
+          companiesApi.index({ is_partner: false, verification_status: "verified" }).catch(() => ({ data: [] })),
           applicationsApi.index().catch(() => ({ data: [] })),
           companyProposalsApi.index().catch(() => ({ data: [] })),
         ]);
-        setCompanies(cRes?.data ?? []);
+        // Mitra resmi + nonmitra terverifikasi sama-sama dapat dilamar;
+        // dibedakan lewat badge di kartu.
+        setCompanies([...(cRes?.data ?? []), ...(vRes?.data ?? [])]);
         setApps(aRes?.data ?? []);
         setProposals(pRes?.data ?? []);
       } finally { setLoading(false); }
@@ -106,14 +109,17 @@ function PilihPerusahaan({ onMeta }) {
     <div>
       {msg && <div className="siswa-ok">{msg}</div>}
       <div className="siswa-card">
-        <div className="siswa-between" style={{ marginBottom: 16 }}>
-          <h3 className="siswa-card-title">Perusahaan Mitra Tersedia</h3>
+        <div className="siswa-between" style={{ marginBottom: 4 }}>
+          <h3 className="siswa-card-title">Perusahaan Bermitra</h3>
           <span style={{ position: "relative" }}>
             <i className="fa-solid fa-magnifying-glass" style={{ position: "absolute", left: 14, top: 13, color: "#94a3b8", fontSize: 13 }}></i>
             <input className="siswa-input" style={{ paddingLeft: 36, width: 240 }} placeholder="Cari perusahaan…"
               value={q} onChange={(e) => setQ(e.target.value)} />
           </span>
         </div>
+        <p className="siswa-muted" style={{ marginTop: 0, marginBottom: 16, fontSize: 12.5 }}>
+          Perusahaan mitra dan nonmitra yang telah terverifikasi sekolah.
+        </p>
         {loading ? <SkelCards n={3} /> : list.length === 0 ? (
           <div className="siswa-empty"><i className="fa-solid fa-building"></i>Tidak ada perusahaan ditemukan.</div>
         ) : (
@@ -135,9 +141,14 @@ function PilihPerusahaan({ onMeta }) {
                   </div>
                   <div className="siswa-quota"><i style={{ width: `${Math.min(pct, 100)}%` }}></i></div>
                   <div className="siswa-between siswa-mt">
-                    <span className={`siswa-badge ${pct >= 100 ? "s-badge-red" : "s-badge-green"}`}>
-                      <span className="dot"></span>{pct >= 100 ? "Penuh" : "Tersedia"}
-                    </span>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <span className={`siswa-badge ${c.is_partner ? "s-badge-green" : "s-badge-blue"}`}>
+                        <span className="dot"></span>{c.is_partner ? "Mitra" : "Terverifikasi"}
+                      </span>
+                      <span className={`siswa-badge ${pct >= 100 ? "s-badge-red" : "s-badge-green"}`}>
+                        <span className="dot"></span>{pct >= 100 ? "Penuh" : "Tersedia"}
+                      </span>
+                    </div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <button type="button" className="siswa-btn siswa-btn-outline siswa-btn-sm"
                         onClick={() => setDetail(c)}>
@@ -162,18 +173,21 @@ function PilihPerusahaan({ onMeta }) {
       </div>
       {detail && <DetailPerusahaan c={detail} onClose={() => setDetail(null)} onAjukan={(c) => { setDetail(null); ajukan(c); }} diajukan={sudahDiajukan(detail.id)} sending={sending === detail.id} />}
 
-      {/* Ajukan perusahaan NONMITRA — menunggu verifikasi Admin Sekolah. */}
+      {/* Perusahaan NONMITRA — hanya usulan dari siswa ini. */}
       <div className="siswa-card">
-        <div className="siswa-between" style={{ marginBottom: 10 }}>
-          <h3 className="siswa-card-title">Perusahaan Belum Terdaftar?</h3>
+        <div className="siswa-between" style={{ marginBottom: 4 }}>
+          <h3 className="siswa-card-title">Perusahaan Nonmitra</h3>
           <button type="button" className="siswa-btn siswa-btn-outline siswa-btn-sm"
             onClick={() => setShowForm((v) => !v)}>
             {showForm ? "Tutup" : "Ajukan Perusahaan"}
           </button>
         </div>
+        <p className="siswa-muted" style={{ marginTop: 0, marginBottom: 10, fontSize: 12.5 }}>
+          Hanya menampilkan perusahaan nonmitra yang Anda ajukan.
+        </p>
         <p className="siswa-muted" style={{ marginTop: 0, fontSize: 12.5 }}>
-          Ajukan perusahaan nonmitra. Pengajuan diperiksa Admin Sekolah terlebih dahulu —
-          setelah disetujui, perusahaan otomatis terdaftar sebagai mitra dan bisa dipilih seperti biasa.
+          Pengajuan diperiksa Admin Sekolah terlebih dahulu —
+          setelah disetujui, perusahaan berstatus terverifikasi dan bisa dipilih seperti biasa.
         </p>
 
         {proposals.filter((p) => p.verification_status !== "verified").length > 0 && (

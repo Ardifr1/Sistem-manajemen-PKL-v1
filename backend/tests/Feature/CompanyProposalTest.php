@@ -120,7 +120,7 @@ class CompanyProposalTest extends TestCase
         $this->postJson('/api/company-proposals', $this->payload())->assertForbidden();
     }
 
-    public function test_admin_can_approve_proposal_and_company_becomes_partner(): void
+    public function test_admin_can_approve_proposal_and_company_becomes_verified_not_partner(): void
     {
         $student = $this->createUser('student', 'student_a');
         $admin = $this->createUser('admin', 'admin_a');
@@ -138,10 +138,12 @@ class CompanyProposalTest extends TestCase
 
         $company->refresh();
 
+        // Terverifikasi (boleh dipakai PKL), tetapi BUKAN mitra resmi.
         $this->assertSame(Company::VERIFICATION_VERIFIED, $company->verification_status);
-        $this->assertTrue((bool) $company->is_partner);
+        $this->assertFalse((bool) $company->is_partner);
         $this->assertTrue((bool) $company->is_active);
         $this->assertSame($admin->id, $company->verified_by);
+        $this->assertTrue($company->isUsableForPlacement());
 
         $this->assertDatabaseHas('audit_logs', [
             'action' => 'company_proposal.approved',

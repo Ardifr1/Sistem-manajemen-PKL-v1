@@ -11,9 +11,22 @@ class CompanyController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $companies = Company::query()
-            ->orderBy('name')
-            ->get();
+        $validated = $request->validate([
+            'is_partner' => ['nullable', 'boolean'],
+            'verification_status' => ['nullable', 'string', 'max:40'],
+        ]);
+
+        $query = Company::query()->orderBy('name');
+
+        if (array_key_exists('is_partner', $validated)) {
+            $query->where('is_partner', (bool) $validated['is_partner']);
+        }
+
+        if (! empty($validated['verification_status'])) {
+            $query->where('verification_status', $validated['verification_status']);
+        }
+
+        $companies = $query->get();
 
         return response()->json([
             'message' => 'Data perusahaan berhasil diambil.',

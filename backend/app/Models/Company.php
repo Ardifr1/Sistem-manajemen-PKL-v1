@@ -82,6 +82,11 @@ class Company extends Model
         return $this->verification_status === self::VERIFICATION_REJECTED;
     }
 
+    public function isVerified(): bool
+    {
+        return $this->verification_status === self::VERIFICATION_VERIFIED;
+    }
+
     /**
      * Boleh dipakai pada alur pengajuan/penempatan resmi?
      * Data lama (verification_status NULL) tetap dianggap sah selama
@@ -89,7 +94,9 @@ class Company extends Model
      */
     public function isUsableForPlacement(): bool
     {
-        return (bool) $this->is_partner
+        // Bisa dipakai penempatan bila: mitra resmi ATAU nonmitra yang sudah
+        // terverifikasi sekolah — dan aktif serta tidak pending/ditolak.
+        return ((bool) $this->is_partner || $this->isVerified())
             && (bool) $this->is_active
             && ! $this->isPendingSchoolVerification()
             && ! $this->isVerificationRejected();
