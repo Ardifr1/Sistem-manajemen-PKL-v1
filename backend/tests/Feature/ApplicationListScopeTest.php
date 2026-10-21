@@ -73,6 +73,51 @@ class ApplicationListScopeTest extends TestCase
         $this->assertSame([], $response->json('data'));
     }
 
+    public function test_teacher_gets_forbidden_for_student_id_outside_supervision(): void
+    {
+        $period = $this->createPeriod();
+        $company = $this->createCompany('PT A');
+        $teacher = $this->createUser('teacher', 'teacher_a');
+        $otherTeacher = $this->createUser('teacher', 'teacher_b');
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+
+        $applicationA = $this->makeApplicationFor($studentA, $company, $period);
+        $this->makeApplicationFor($studentB, $company, $period);
+        $this->createPlacement($studentA, $company, $period, null, $teacher);
+        $this->createPlacement($studentB, $company, $period, null, $otherTeacher);
+
+        Sanctum::actingAs($teacher);
+
+        // Siswa bimbingannya sendiri: boleh, dan hanya lamarannya yang tampil.
+        $response = $this->getJson('/api/pkl-applications?student_id='.$studentA->id)->assertOk();
+        $this->assertSame(
+            [$applicationA->id],
+            collect($response->json('data'))->pluck('id')->all()
+        );
+
+        // Siswa di luar bimbingan: ditolak 403, bukan daftar kosong.
+        $this->getJson('/api/pkl-applications?student_id='.$studentB->id)
+            ->assertForbidden();
+    }
+
+    public function test_company_gets_forbidden_for_student_without_application_to_its_company(): void
+    {
+        $period = $this->createPeriod();
+        $companyA = $this->createCompany('PT A');
+        $companyB = $this->createCompany('PT B');
+        $student = $this->createUser('student', 'student_a');
+        $companyUser = $this->createUser('company', 'company_a');
+        $this->attachCompanySupervisor($companyUser, $companyA);
+
+        $this->makeApplicationFor($student, $companyB, $period);
+
+        Sanctum::actingAs($companyUser);
+
+        $this->getJson('/api/pkl-applications?student_id='.$student->id)
+            ->assertForbidden();
+    }
+
     public function test_teacher_only_lists_applications_of_supervised_students(): void
     {
         $period = $this->createPeriod();

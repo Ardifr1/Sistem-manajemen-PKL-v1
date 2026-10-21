@@ -33,10 +33,35 @@ class PklApplicationController extends Controller
             ->orderBy('choice_order');
 
         if (! empty($validated['student_id'])) {
-            if ($user->role === 'student' && (int) $validated['student_id'] !== $user->id) {
+            $studentId = (int) $validated['student_id'];
+
+            // Filter student_id yang eksplisit tidak boleh memperluas
+            // cakupan akses: meminta data siswa di luar kewenangan sendiri
+            // ditolak 403, bukan sekadar menghasilkan daftar kosong.
+            if ($user->role === 'student' && $studentId !== $user->id) {
                 abort(403);
             }
-            $query->where('student_id', $validated['student_id']);
+
+            if ($user->role === 'teacher') {
+                $supervised = PklPlacement::query()
+                    ->where('student_id', $studentId)
+                    ->where('teacher_id', $user->id)
+                    ->exists();
+                if (! $supervised) {
+                    abort(403);
+                }
+            } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
+                $companyIds = $this->authorizedCompanyIds($user);
+                $hasApplication = $companyIds !== [] && PklApplication::query()
+                    ->where('student_id', $studentId)
+                    ->whereIn('company_id', $companyIds)
+                    ->exists();
+                if (! $hasApplication) {
+                    abort(403);
+                }
+            }
+
+            $query->where('student_id', $studentId);
         } elseif ($user->role === 'student') {
             $query->where('student_id', $user->id);
         }
