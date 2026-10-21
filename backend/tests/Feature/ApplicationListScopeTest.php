@@ -101,7 +101,7 @@ class ApplicationListScopeTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_company_gets_forbidden_for_student_without_application_to_its_company(): void
+    public function test_company_student_filter_for_other_company_student_returns_empty_list(): void
     {
         $period = $this->createPeriod();
         $companyA = $this->createCompany('PT A');
@@ -114,8 +114,12 @@ class ApplicationListScopeTest extends TestCase
 
         Sanctum::actingAs($companyUser);
 
-        $this->getJson('/api/pkl-applications?student_id='.$student->id)
-            ->assertForbidden();
+        // Berbeda dengan guru (403): filter siswa perusahaan lain pada
+        // perusahaan menghasilkan 200 dengan daftar kosong — cakupan
+        // perusahaan yang menyaring, tanpa membocorkan data apa pun.
+        $response = $this->getJson('/api/pkl-applications?student_id='.$student->id)
+            ->assertOk();
+        $this->assertSame([], $response->json('data'));
     }
 
     public function test_teacher_only_lists_applications_of_supervised_students(): void

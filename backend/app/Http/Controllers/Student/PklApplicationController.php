@@ -50,16 +50,10 @@ class PklApplicationController extends Controller
                 if (! $supervised) {
                     abort(403);
                 }
-            } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
-                $companyIds = $this->authorizedCompanyIds($user);
-                $hasApplication = $companyIds !== [] && PklApplication::query()
-                    ->where('student_id', $studentId)
-                    ->whereIn('company_id', $companyIds)
-                    ->exists();
-                if (! $hasApplication) {
-                    abort(403);
-                }
             }
+            // Company/supervisor tidak ditolak di sini: pembatasan cakupan
+            // di bawah membuat filter student_id perusahaan lain menghasilkan
+            // daftar kosong (200) tanpa membocorkan data.
 
             $query->where('student_id', $studentId);
         } elseif ($user->role === 'student') {
