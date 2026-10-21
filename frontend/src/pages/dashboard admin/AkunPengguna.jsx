@@ -108,6 +108,9 @@ function DetailPengguna({ row, onBack, onEdit, onHapus, onMeta }) {
               className="zip-act zip-act-edit"
               disabled={resending}
               onClick={async () => {
+                // Kirim ulang membuat password sementara BARU — password
+                // sementara sebelumnya langsung tidak berlaku lagi.
+                if (!window.confirm("Kirim ulang akan membuat password sementara baru dan password sebelumnya tidak berlaku lagi. Lanjutkan?")) return;
                 setResending(true);
                 setResendResult(null);
                 try {
@@ -483,6 +486,14 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
   const [error, setError] = useState("");
   // Status pengiriman informasi akun (email + WhatsApp) untuk akun baru.
   const [delivery, setDelivery] = useState(null);
+  // Penyelamatan akun baru: bila password sementara tidak terkirim ke
+  // kanal mana pun, admin mengatur password manual dari panel hasil
+  // pembuatan — akun tidak terdampar tanpa ada yang tahu password-nya.
+  const [createdId, setCreatedId] = useState(null);
+  const [rescuePw, setRescuePw] = useState("");
+  const [rescueBusy, setRescueBusy] = useState(false);
+  const [rescueDone, setRescueDone] = useState(false);
+  const [rescueError, setRescueError] = useState("");
 
   useEffect(() => {
     onMeta?.({
@@ -532,13 +543,39 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
         // Akun tanpa password manual: backend membuat password sementara
         // dan mengirim email login + password via email & WhatsApp,
         // mengembalikan status tiap kanal.
-        if (res?.delivery) setDelivery(res.delivery);
-        else onSaved?.();
+        if (res?.delivery) {
+          setCreatedId(res?.data?.id ?? null);
+          setDelivery(res.delivery);
+        } else onSaved?.();
       }
     } catch (err) {
       setError(err?.message || "Gagal menyimpan pengguna.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Semua kanal gagal/belum terkonfigurasi → password sementara tidak
+  // diterima siapa pun; akun belum bisa login sampai password diatur.
+  const deliveryFailed =
+    delivery &&
+    createdId &&
+    !Object.values(delivery).some((d) => d && d.status === "sent");
+
+  const doRescue = async () => {
+    if (rescuePw.length < 8) {
+      setRescueError("Password minimal 8 karakter.");
+      return;
+    }
+    setRescueBusy(true);
+    setRescueError("");
+    try {
+      await usersApi.update(createdId, { password: rescuePw });
+      setRescueDone(true);
+    } catch (err) {
+      setRescueError(err?.message || "Gagal mengatur password.");
+    } finally {
+      setRescueBusy(false);
     }
   };
 
@@ -575,6 +612,42 @@ function UserForm({ initial, onCancel, onSaved, onMeta }) {
                   </div>
                 );
               })}
+              {deliveryFailed && !rescueDone && (
+                <div className="zip-delivery-rescue">
+                  <p>
+                    <strong>Password sementara tidak terkirim ke mana pun.</strong>{" "}
+                    Akun ini belum bisa login karena tidak ada yang menerima
+                    password sementaranya. Atur password manual sekarang —
+                    akun langsung bisa login dengan password ini dan wajib
+                    menggantinya saat pertama masuk.
+                  </p>
+                  {rescueError && <div className="zip-error">{rescueError}</div>}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <input
+                      type="password"
+                      value={rescuePw}
+                      onChange={(e) => setRescuePw(e.target.value)}
+                      placeholder="Password manual (min. 8 karakter)"
+                      autoComplete="new-password"
+                      style={{ flex: "1 1 220px" }}
+                    />
+                    <button
+                      type="button"
+                      className="zip-btn-primary"
+                      onClick={doRescue}
+                      disabled={rescueBusy || rescuePw.length < 8}
+                    >
+                      {rescueBusy ? "Menyimpan…" : "Atur Password"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {rescueDone && (
+                <p className="zip-delivery-msg" style={{ color: "#15803d", fontWeight: 600 }}>
+                  Password manual tersimpan. Akun sekarang bisa login dengan
+                  email + password tersebut.
+                </p>
+              )}
               <button
                 type="button"
                 className="zip-btn-primary"
