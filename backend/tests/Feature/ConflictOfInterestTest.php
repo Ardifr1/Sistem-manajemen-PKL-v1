@@ -34,17 +34,22 @@ class ConflictOfInterestTest extends TestCase
 
         Sanctum::actingAs($admin);
 
+        // Persetujuan langsung oleh admin tidak ada lagi: status 'approved'
+        // hanya lahir dari pilihan final siswa yang membuat penempatan.
         $this->putJson("/api/pkl-applications/{$application->id}", [
             'status' => 'approved',
-        ])->assertForbidden();
+        ])->assertStatus(422);
 
         $this->assertDatabaseHas('pkl_applications', [
             'id' => $application->id,
             'status' => 'accepted',
         ]);
+        $this->assertDatabaseMissing('pkl_placements', [
+            'application_id' => $application->id,
+        ]);
     }
 
-    public function test_admin_without_membership_can_still_approve(): void
+    public function test_admin_cannot_approve_application_directly_without_placement(): void
     {
         $period = $this->createPeriod();
         $company = $this->createCompany();
@@ -58,19 +63,32 @@ class ConflictOfInterestTest extends TestCase
 
         $this->putJson("/api/pkl-applications/{$application->id}", [
             'status' => 'approved',
-        ])->assertOk();
+        ])->assertStatus(422);
 
+        // Tidak ada lamaran 'approved' tanpa penempatan terkait.
         $this->assertDatabaseHas('pkl_applications', [
             'id' => $application->id,
-            'status' => 'approved',
+            'status' => 'accepted',
+        ]);
+        $this->assertDatabaseMissing('pkl_placements', [
+            'application_id' => $application->id,
+        ]);
+
+        // Siswa tetap dapat memilih tawaran -> penempatan dibuat otomatis.
+        Sanctum::actingAs($student);
+        $this->postJson("/api/pkl-applications/{$application->id}/choose")->assertOk();
+        $this->assertDatabaseHas('pkl_placements', [
+            'application_id' => $application->id,
+            'student_id' => $student->id,
         ]);
     }
 
     /**
-     * Keanggotaan nonaktif tidak boleh memblokir (Hard Block hanya untuk
-     * keanggotaan AKTIF).
+     * Keanggotaan nonaktif tidak memblokir tindakan sekolah yang sah
+     * (Hard Block hanya untuk keanggotaan AKTIF) — diuji lewat pembuatan
+     * penempatan manual oleh admin.
      */
-    public function test_inactive_membership_does_not_block_school_approval(): void
+    public function test_inactive_membership_does_not_block_placement_creation(): void
     {
         $period = $this->createPeriod();
         $company = $this->createCompany();
@@ -83,9 +101,15 @@ class ConflictOfInterestTest extends TestCase
 
         Sanctum::actingAs($admin);
 
-        $this->putJson("/api/pkl-applications/{$application->id}", [
-            'status' => 'approved',
-        ])->assertOk();
+        $this->postJson('/api/pkl-placements', [
+            'student_id' => $student->id,
+            'company_id' => $company->id,
+            'pkl_period_id' => $period->id,
+            'application_id' => $application->id,
+            'start_date' => $period->start_date,
+            'end_date' => $period->end_date,
+            'status' => 'active',
+        ])->assertCreated();
     }
 
     public function test_admin_with_active_membership_cannot_create_placement_for_that_company(): void

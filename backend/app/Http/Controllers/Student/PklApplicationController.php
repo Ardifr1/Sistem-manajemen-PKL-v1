@@ -8,7 +8,6 @@ use App\Models\Company;
 use App\Models\PklApplication;
 use App\Models\PklPeriod;
 use App\Models\PklPlacement;
-use App\Policies\Concerns\BlocksCompanyConflict;
 use App\Support\PlacementQuota;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -18,8 +17,6 @@ use Illuminate\Support\Facades\Gate;
 
 class PklApplicationController extends Controller
 {
-    use BlocksCompanyConflict;
-
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', PklApplication::class);
@@ -32,47 +29,24 @@ class PklApplicationController extends Controller
         $query = PklApplication::with(['company', 'pklPeriod'])
             ->orderBy('choice_order');
 
-        // Cakupan data SELALU dibatasi sesuai peran, termasuk saat filter
-        // student_id dikirim. Tanpa ini, filter student_id menjadi celah IDOR
-        // (guru/perusahaan dapat membaca lamaran siswa lain).
-        if ($user->role === 'student') {
-            if (! empty($validated['student_id']) && (int) $validated['student_id'] !== (int) $user->id) {
+        if (! empty($validated['student_id'])) {
+            if ($user->role === 'student' && (int) $validated['student_id'] !== $user->id) {
                 abort(403);
             }
-
-            $query->where('student_id', $user->id);
-        } elseif ($user->role === 'teacher') {
-            // Siswa bimbingan guru ditentukan lewat pkl_placements.teacher_id
-            // (tabel users tidak memiliki kolom teacher_id).
-            $assignedStudentIds = PklPlacement::query()
-                ->where('teacher_id', $user->id)
-                ->select('student_id');
-
-            if (! empty($validated['student_id'])) {
-                $requested = (int) $validated['student_id'];
-                $isAssigned = PklPlacement::query()
-                    ->where('teacher_id', $user->id)
-                    ->where('student_id', $requested)
-                    ->exists();
-
-                if (! $isAssigned) {
-                    abort(403);
+            $query->where('student_id', $validated['student_id']);
+        } else {
+            // Tanpa student_id: batasi sesuai role
+            if ($user->role === 'student') {
+                $query->where('student_id', $user->id);
+            } elseif ($user->role === 'teacher') {
+                $query->whereHas('student', fn ($q) => $q->where('teacher_id', $user->id));
+            } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
+                $companyId = $user->companySupervisor?->company_id;
+                if ($companyId) {
+                    $query->where('company_id', $companyId);
                 }
             }
-
-            $query->whereIn('student_id', $assignedStudentIds);
-        } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
-            $companyIds = $this->authorizedCompanyIds($user);
-
-            if ($companyIds === []) {
-                $query->whereRaw('1 = 0');
-            } else {
-                $query->whereIn('company_id', $companyIds);
-            }
-        }
-
-        if (! empty($validated['student_id'])) {
-            $query->where('student_id', $validated['student_id']);
+            // admin: semua
         }
 
         if (isset($validated['pkl_period_id'])) {
@@ -380,43 +354,23 @@ class PklApplicationController extends Controller
         Request $request,
         PklApplication $pklApplication
     ): JsonResponse {
-        Gate::authorize('update', $pklApplication);
-
-        // Persetujuan sekolah: admin dapat mengubah status lamaran yang sudah
-        // diterima perusahaan (accepted) menjadi approved (resmi) / rejected.
-        // Hanya admin (dan bukan admin yang berkonflik kepentingan dengan
-        // perusahaan tujuan) yang boleh melakukannya — diperiksa di policy.
+        // Perubahan STATUS lamaran hanya boleh lewat review perusahaan
+        // (cabang di bawah). Status 'approved' TIDAK boleh disetel langsung
+        // oleh siapa pun — status itu hanya lahir dari pilihan final siswa
+        // (choose) yang membuat penempatan resmi secara atomik. Menyetelnya
+        // langsung menghasilkan lamaran "resmi" tanpa penempatan terkait
+        // (data tidak konsisten) dan siswa tidak bisa lagi memilih tawaran.
         if ($request->has('status')) {
-            Gate::authorize('approve', $pklApplication);
-
-            if ($pklApplication->status !== 'accepted') {
-                return response()->json([
-                    'message' => 'Hanya lamaran berstatus diterima perusahaan yang dapat disetujui/ditolak sekolah.',
-                ], 422);
+            if ($request->user()->role === 'company') {
+                return $this->reviewByCompany($request, $pklApplication);
             }
 
-            // Hard Block: admin yang terhubung dengan perusahaan tujuan
-            // tidak boleh menyetujui/menolak dalam kapasitas sekolah.
-            $this->denyOnCompanyConflict(
-                $request->user(),
-                $pklApplication->company_id,
-                'application.approval',
-                $pklApplication,
-            );
-
-            $validated = $request->validate([
-                'status' => ['required', 'string', 'in:approved,rejected'],
-            ]);
-            $pklApplication->update($validated);
-            $pklApplication->load(['company', 'pklPeriod']);
-
             return response()->json([
-                'message' => $validated['status'] === 'approved'
-                    ? 'Lamaran disetujui sekolah dan resmi.'
-                    : 'Lamaran ditolak sekolah.',
-                'data' => $pklApplication,
-            ]);
+                'message' => 'Status lamaran tidak dapat diubah langsung. Penempatan resmi dibuat otomatis saat siswa memilih tawaran.',
+            ], 422);
         }
+
+        Gate::authorize('update', $pklApplication);
 
         if (! in_array($pklApplication->status, ['pending', 'rejected'], true)) {
             return response()->json([
@@ -478,6 +432,94 @@ class PklApplicationController extends Controller
 
         return response()->json([
             'message' => 'Pendaftaran PKL berhasil diperbarui.',
+            'data' => $pklApplication,
+        ]);
+    }
+
+    /**
+     * Review perusahaan atas lamaran yang ditujukan ke perusahaannya:
+     * terima / tolak / masuk seleksi / interview.
+     *
+     * Transisi yang sah: dari pending/seleksi/interview menuju
+     * seleksi/interview/accepted/rejected. Status yang sudah diputuskan
+     * (accepted/approved/rejected) tidak dapat direview ulang.
+     *
+     * Penerimaan (accepted) memeriksa kuota di dalam transaksi dengan
+     * baris perusahaan terkunci: siswa berstatus accepted maupun approved
+     * (sudah ditempatkan) sama-sama memakai kuota perusahaan.
+     */
+    private function reviewByCompany(
+        Request $request,
+        PklApplication $pklApplication
+    ): JsonResponse {
+        Gate::authorize('review', $pklApplication);
+
+        $validated = $request->validate([
+            'status' => ['required', 'string', 'in:seleksi,interview,accepted,rejected'],
+        ]);
+
+        if (! in_array($pklApplication->status, ['pending', 'seleksi', 'interview'], true)) {
+            return response()->json([
+                'message' => 'Lamaran yang sudah diputuskan tidak dapat direview ulang.',
+            ], 422);
+        }
+
+        $target = $validated['status'];
+
+        $result = DB::transaction(function () use ($request, $pklApplication, $target) {
+            if ($target === 'accepted') {
+                $company = Company::query()
+                    ->whereKey($pklApplication->company_id)
+                    ->lockForUpdate()
+                    ->first();
+
+                $quota = (int) $company->student_quota;
+
+                if ($quota <= 0) {
+                    return ['error' => 'Perusahaan tidak memiliki kuota siswa.'];
+                }
+
+                $committed = PklApplication::query()
+                    ->where('company_id', $company->id)
+                    ->where('pkl_period_id', $pklApplication->pkl_period_id)
+                    ->whereIn('status', ['accepted', 'approved'])
+                    ->count();
+
+                if ($committed >= $quota) {
+                    return ['error' => 'Kuota siswa untuk perusahaan pada periode PKL ini sudah penuh.'];
+                }
+            }
+
+            $oldStatus = $pklApplication->status;
+            $pklApplication->update(['status' => $target]);
+
+            AuditLog::create([
+                'user_id' => $request->user()->id,
+                'action' => 'application.reviewed',
+                'subject_type' => PklApplication::class,
+                'subject_id' => $pklApplication->id,
+                'old_status' => $oldStatus,
+                'new_status' => $target,
+                'metadata' => [
+                    'student_id' => (int) $pklApplication->student_id,
+                    'company_id' => (int) $pklApplication->company_id,
+                    'pkl_period_id' => (int) $pklApplication->pkl_period_id,
+                ],
+            ]);
+
+            return ['ok' => true];
+        });
+
+        if (isset($result['error'])) {
+            return response()->json([
+                'message' => $result['error'],
+            ], 422);
+        }
+
+        $pklApplication->load(['company', 'pklPeriod']);
+
+        return response()->json([
+            'message' => 'Status lamaran berhasil diperbarui.',
             'data' => $pklApplication,
         ]);
     }

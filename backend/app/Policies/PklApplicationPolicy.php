@@ -12,15 +12,10 @@ class PklApplicationPolicy
 
     public function viewAny(User $user): bool
     {
-        // Perusahaan/pembimbing industri juga memerlukan daftar lamaran untuk
-        // meninjau lamaran yang ditujukan ke perusahaannya. Cakupan datanya
-        // dibatasi pada perusahaannya di controller (bukan seluruh data).
         return in_array($user->role, [
             'admin',
             'teacher',
             'student',
-            'company',
-            'supervisor',
         ], true);
     }
 
@@ -59,6 +54,20 @@ class PklApplicationPolicy
     {
         return $user->role === 'student'
             && (int) $application->student_id === (int) $user->id;
+    }
+
+    /**
+     * Review perusahaan atas lamaran yang ditujukan ke perusahaannya
+     * (transisi pending/seleksi/interview -> seleksi/interview/accepted/rejected).
+     *
+     * User harus berwenang atas perusahaan tujuan lamaran (keanggotaan aktif
+     * atau tautan perusahaan). Keputusan perusahaan BUKAN tindakan sisi
+     * sekolah, sehingga Hard Block konflik kepentingan tidak berlaku di sini.
+     */
+    public function review(User $user, PklApplication $application): bool
+    {
+        return $user->role === 'company'
+            && $this->isAuthorizedForCompany($user, $application->company_id);
     }
 
     /**
