@@ -13,11 +13,14 @@ import "./admin-pages.css";
    2 fase + skeleton agar UI langsung tampil. */
 
 const STATUS_BADGE = {
+  pending: { label: "Diajukan", cls: "blue" },
   submitted: { label: "Diajukan", cls: "blue" },
   diajukan: { label: "Diajukan", cls: "blue" },
+  seleksi: { label: "Dalam seleksi", cls: "yellow" },
   reviewed: { label: "Dalam seleksi", cls: "yellow" },
   interview: { label: "Dalam seleksi", cls: "yellow" },
   accepted: { label: "Diterima", cls: "green" },
+  approved: { label: "Diterima", cls: "green" },
   diterima: { label: "Diterima", cls: "green" },
   rejected: { label: "Ditolak", cls: "red" },
   ditolak: { label: "Ditolak", cls: "red" },
@@ -34,21 +37,6 @@ const fmtDate = (iso) => {
 const arr = (r) => (Array.isArray(r) ? r : r?.data?.data || r?.data || []);
 const nameOf = (u) => u?.name ?? u?.nama ?? "-";
 const companyName = (c) => c?.name ?? c?.nama ?? c?.company_name ?? "-";
-
-/* Fallback mockup bila API kosong/gagal — tampilan tidak pernah blank. */
-const FALLBACK_STATS = { siswa: 180, guru: 12, perusahaan: 12, pengajuan: 240, penempatan: 150 };
-const FALLBACK_RECENT = [
-  { id: 1, siswa: "Rizky Maulana", kelas: "XI RPL 2", perusahaan: "PT Solusi Digital Nusantara", status: "submitted", tanggal: "17 Jun" },
-  { id: 2, siswa: "Sinta Dewi", kelas: "XI RPL 1", perusahaan: "CV Pixel Kreatif", status: "reviewed", tanggal: "17 Jun" },
-  { id: 3, siswa: "Yoga Firmansyah", kelas: "XI RPL 3", perusahaan: "PT Cipta Aplikasi Bangsa", status: "accepted", tanggal: "16 Jun" },
-  { id: 4, siswa: "Nadia Putri", kelas: "XI RPL 2", perusahaan: "PT Nusa Data Indonesia", status: "rejected", tanggal: "15 Jun" },
-];
-const FALLBACK_DIST = [
-  { label: "Diterima perusahaan", n: 96, color: "#22c55e" },
-  { label: "Dalam seleksi / interview", n: 58, color: "#f59e0b" },
-  { label: "Baru diajukan", n: 44, color: "#3b82f6" },
-  { label: "Ditolak", n: 42, color: "#cbd5e1" },
-];
 
 function StatCard({ label, value, sub, loading }) {
   if (loading) {
@@ -103,15 +91,17 @@ function Dashboard({ onMeta }) {
       const apps = arr(aRes);
       const placements = arr(pRes);
 
-      // Ringkasan (logika dari adminSummary, tanpa request ganda)
+      // Ringkasan — selalu angka asli dari API, termasuk nol.
+      // (Dulu ada fallback angka mockup saat hasil 0; sudah dihapus agar
+      // dashboard tidak menampilkan data contoh sebagai data nyata.)
       const isRole = (r) => users.filter((u) => u.role === r).length;
       const total = apps.length;
       const s = {
-        siswa: isRole("student") || FALLBACK_STATS.siswa,
-        guru: isRole("teacher") || FALLBACK_STATS.guru,
-        perusahaan: companies.length || FALLBACK_STATS.perusahaan,
-        pengajuan: apps.filter((a) => ["submitted", "reviewed"].includes(a.status)).length || total || FALLBACK_STATS.pengajuan,
-        penempatan: placements.length || FALLBACK_STATS.penempatan,
+        siswa: isRole("student"),
+        guru: isRole("teacher"),
+        perusahaan: companies.length,
+        pengajuan: total,
+        penempatan: placements.length,
       };
 
       // Pengajuan terbaru (logika dari adminRecentApplications, tanpa request ganda)
@@ -132,27 +122,21 @@ function Dashboard({ onMeta }) {
         };
       });
 
-      // Perlu tindakan
-      const penempatanPending = placements.filter((p) => ["pending", "menunggu", "submitted"].includes(p.status)).length;
+      // Perlu tindakan. (Item lama "penempatan menunggu persetujuan" dihapus:
+      // penempatan kini terbit otomatis dari pilihan siswa, tanpa persetujuan.)
       const now = Date.now();
       const seleksiLama = apps.filter((a) => {
-        if (!["reviewed", "interview"].includes(a.status)) return false;
+        if (!["seleksi", "reviewed", "interview"].includes(a.status)) return false;
         const t = new Date(a.updated_at || a.created_at || 0).getTime();
         return now - t > 7 * 24 * 3600 * 1000;
       }).length;
       const kuotaPenuh = companies.filter((c) => {
-        const q = Number(c.quota) || 0;
+        const q = Number(c.student_quota) || 0;
         if (!q) return false;
         const terisi = placements.filter((p) => String(p.company_id) === String(c.id)).length;
         return terisi >= q * 0.8;
       });
       const acts = [];
-      if (penempatanPending > 0) acts.push({
-        icon: "fa-triangle-exclamation", tone: "yellow",
-        title: `${penempatanPending} penempatan menunggu persetujuan`,
-        desc: "Siswa sudah diterima perusahaan",
-        btn: "Tinjau", primary: true, to: "/admin/persetujuan",
-      });
       if (seleksiLama > 0) acts.push({
         icon: "fa-clock", tone: "blue",
         title: `${seleksiLama} pengajuan seleksi > 7 hari`,
@@ -164,25 +148,26 @@ function Dashboard({ onMeta }) {
         title: `${kuotaPenuh.length} perusahaan kuota hampir penuh`,
         desc: kuotaPenuh.slice(0, 2).map((c) => {
           const terisi = placements.filter((p) => String(p.company_id) === String(c.id)).length;
-          return `${companyName(c)} (${terisi}/${c.quota})`;
+          return `${companyName(c)} (${terisi}/${c.student_quota})`;
         }).join(" • "),
         btn: "Lihat", primary: false, to: "/admin/perusahaan",
       });
 
-      // Distribusi status pengajuan
+      // Distribusi status pengajuan — dihitung dari status asli backend
+      // (pending, seleksi, interview, accepted, approved, rejected).
       const count = (pred) => apps.filter(pred).length;
-      const d = total ? [
-        { label: "Diterima perusahaan", n: count((a) => ["accepted", "diterima"].includes(a.status)), color: "#22c55e" },
-        { label: "Dalam seleksi / interview", n: count((a) => ["reviewed", "interview"].includes(a.status)), color: "#f59e0b" },
-        { label: "Baru diajukan", n: count((a) => ["submitted", "diajukan"].includes(a.status)), color: "#3b82f6" },
+      const d = [
+        { label: "Diterima perusahaan", n: count((a) => ["accepted", "approved", "diterima"].includes(a.status)), color: "#22c55e" },
+        { label: "Dalam seleksi / interview", n: count((a) => ["seleksi", "reviewed", "interview"].includes(a.status)), color: "#f59e0b" },
+        { label: "Baru diajukan", n: count((a) => ["pending", "submitted", "diajukan"].includes(a.status)), color: "#3b82f6" },
         { label: "Ditolak", n: count((a) => ["rejected", "ditolak"].includes(a.status)), color: "#cbd5e1" },
-      ] : FALLBACK_DIST;
+      ];
 
       setStats(s);
-      setRecent(recRows.length ? recRows : FALLBACK_RECENT);
+      setRecent(recRows);
       setActions(acts);
       setDist(d);
-      setDistTotal(total || 240);
+      setDistTotal(total);
       setReady(true); // UI langsung tampil — tidak menunggu fase 2
     })();
 
@@ -197,10 +182,12 @@ function Dashboard({ onMeta }) {
       const journals = arr(jRes);
       const periods = arr(peRes);
       const menunggu = journals.filter((j) => ["submitted", "pending", "menunggu"].includes(j.status)).length;
-      const aktif = periods.find((p) => p.status === "active" || p.status === "AKTIF") || periods[0] || null;
+      const aktif = periods.find((p) => p.is_active) || periods[0] || null;
 
-      setJurnalAntre(menunggu || 23);
-      setPeriode(aktif);
+      setJurnalAntre(menunggu);
+      // false = fase 2 selesai tetapi belum ada periode sama sekali
+      // (null dipakai khusus untuk keadaan masih memuat).
+      setPeriode(aktif ?? false);
       onMeta?.({
         subtitle: aktif
           ? `SMK Negeri 1 Yogyakarta • Periode ${aktif.name || aktif.nama || "PKL"}`
@@ -212,7 +199,7 @@ function Dashboard({ onMeta }) {
   }, [onMeta, refreshKey]);
 
   const pctPeriode = (() => {
-    if (!periode?.start_date || !periode?.end_date) return 45;
+    if (!periode?.start_date || !periode?.end_date) return 0;
     const s = new Date(periode.start_date).getTime();
     const e = new Date(periode.end_date).getTime();
     const n = Date.now();
@@ -224,11 +211,11 @@ function Dashboard({ onMeta }) {
     <div className="adm-dash">
       {/* 6 kartu stat — skeleton sampai fase 1 tiba */}
       <div className="adm-stats">
-        <StatCard label="SISWA" value={stats?.siswa} sub="6 kelas XI" loading={!ready} />
+        <StatCard label="SISWA" value={stats?.siswa} sub="Akun siswa terdaftar" loading={!ready} />
         <StatCard label="GURU" value={stats?.guru} sub="Pembimbing" loading={!ready} />
-        <StatCard label="PERUSAHAAN" value={stats?.perusahaan} sub="Mitra aktif" loading={!ready} />
-        <StatCard label="PENGAJUAN" value={stats?.pengajuan} sub="Periode ini" loading={!ready} />
-        <StatCard label="PENEMPATAN" value={stats?.penempatan} sub="Resmi disetujui" loading={!ready} />
+        <StatCard label="PERUSAHAAN" value={stats?.perusahaan} sub="Perusahaan terdaftar" loading={!ready} />
+        <StatCard label="PENGAJUAN" value={stats?.pengajuan} sub="Total pengajuan" loading={!ready} />
+        <StatCard label="PENEMPATAN" value={stats?.penempatan} sub="Penempatan resmi" loading={!ready} />
         <StatCard label="JURNAL ANTRE" value={jurnalAntre} sub="Verifikasi industri" loading={jurnalAntre === null} />
       </div>
 
@@ -264,15 +251,17 @@ function Dashboard({ onMeta }) {
         <div className="adm-card">
           <div className="adm-card-head">
             <h3>Periode Aktif</h3>
-            <span className="adm-badge green"><i className="fa-solid fa-circle"></i> AKTIF</span>
+            {periode?.is_active && <span className="adm-badge green"><i className="fa-solid fa-circle"></i> AKTIF</span>}
           </div>
           {periode === null ? (
             <div className="adm-skel-block"><div className="adm-skel-line w50 big"></div><div className="adm-skel-line w80"></div><div className="adm-skel-line w80"></div></div>
+          ) : periode === false ? (
+            <p className="zip-muted" style={{ padding: "8px 0" }}>Belum ada periode PKL.</p>
           ) : (
             <>
-              <div className="adm-periode-name">{periode?.name || periode?.nama || "PKL 2026"}</div>
-              <div className="adm-kv"><span>Mulai</span><strong>{fmtDate(periode?.start_date) !== "-" ? fmtDate(periode?.start_date) : "1 Agu 2026"}</strong></div>
-              <div className="adm-kv"><span>Selesai</span><strong>{fmtDate(periode?.end_date) !== "-" ? fmtDate(periode?.end_date) : "31 Okt 2026"}</strong></div>
+              <div className="adm-periode-name">{periode?.name || periode?.nama || "-"}</div>
+              <div className="adm-kv"><span>Mulai</span><strong>{fmtDate(periode?.start_date)}</strong></div>
+              <div className="adm-kv"><span>Selesai</span><strong>{fmtDate(periode?.end_date)}</strong></div>
               <div className="adm-kv"><span>Progres periode</span><strong>{pctPeriode}%</strong></div>
               <div className="adm-progress"><div className="adm-progress-fill" style={{ width: `${pctPeriode}%` }}></div></div>
             </>
@@ -294,6 +283,8 @@ function Dashboard({ onMeta }) {
           </div>
           {!ready ? (
             <div className="adm-skel-block"><div className="adm-skel-line w90"></div><div className="adm-skel-line w90"></div><div className="adm-skel-line w70"></div></div>
+          ) : recent.length === 0 ? (
+            <p className="zip-muted" style={{ padding: "8px 0" }}>Belum ada pengajuan.</p>
           ) : (
             <>
               <div className="adm-table-wrap adm-recent-table">
@@ -359,7 +350,7 @@ function Dashboard({ onMeta }) {
                 );
               })}
               <p className="zip-muted" style={{ fontSize: 12.5, marginTop: 14 }}>
-                Penempatan resmi ({stats?.penempatan}) diterbitkan setelah persetujuan sekolah.
+                Penempatan resmi ({stats?.penempatan ?? 0}) dibuat otomatis saat siswa memilih tawaran yang diterima perusahaan.
               </p>
             </>
           )}
