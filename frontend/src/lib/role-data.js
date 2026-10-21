@@ -8,6 +8,7 @@ import {
   journalsApi,
   usersApi,
   companiesApi,
+  companyMembershipsApi,
   authApi,
 } from "../api/index.js";
 
@@ -72,14 +73,27 @@ export async function getMySupervisorId() {
   }
 }
 
-/** company_id milik user industri yang sedang login (via company-supervisors). */
+/** company_id milik user industri yang sedang login. */
 export async function getMyCompanyId() {
   const user = authApi.currentUser();
   if (!user) return null;
+  // Jalur lama: tautan company-supervisors (akun dari pengajuan perusahaan
+  // & pembimbing).
   try {
     const res = await companiesApi.supervisorsApi.index();
     const sup = arr(res).find((s) => String(s.user_id) === String(user.id));
-    return sup?.company_id ?? null;
+    if (sup?.company_id) return sup.company_id;
+  } catch {
+    /* lanjut ke keanggotaan */
+  }
+  // Jalur admin: akun yang ditautkan lewat keanggotaan perusahaan tidak
+  // punya baris supervisors — resolusi lewat keanggotaan aktif miliknya.
+  try {
+    const res = await companyMembershipsApi.index();
+    const mine = arr(res).find(
+      (m) => String(m.user_id) === String(user.id) && m.status === "active",
+    );
+    return mine?.company_id ?? null;
   } catch {
     return null;
   }

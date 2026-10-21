@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Company;
 
 use App\Http\Controllers\Controller;
+use App\Models\CompanyMembership;
 use App\Models\CompanySupervisor;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -15,7 +16,17 @@ class CompanySupervisorController extends Controller
     /** Ambil company_id milik user company/supervisor yang login. */
     private function myCompanyId(User $user): ?int
     {
-        return $user->companySupervisor?->company_id;
+        if ($user->companySupervisor?->company_id) {
+            return $user->companySupervisor->company_id;
+        }
+
+        // Akun yang ditautkan admin lewat keanggotaan (company_memberships)
+        // tidak memiliki baris company_supervisors — kenali juga tautan
+        // itu, sama seperti akun dari jalur pengajuan perusahaan.
+        return $user->companyMemberships()
+            ->where('status', CompanyMembership::STATUS_ACTIVE)
+            ->orderBy('id')
+            ->value('company_id');
     }
 
     private function canManage(User $user, CompanySupervisor $supervisor): bool

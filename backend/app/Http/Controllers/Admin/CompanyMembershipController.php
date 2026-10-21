@@ -117,12 +117,48 @@ class CompanyMembershipController extends Controller
             $capabilities
         );
 
+        $this->seedCompanyContact($membership);
+
         $membership->load(['user:id,name,username,email,role', 'company:id,name,industry']);
 
         return response()->json([
             'message' => 'Keanggotaan perusahaan berhasil disimpan.',
             'data' => $membership,
         ], $existing === null ? 201 : 200);
+    }
+
+    /**
+     * Begitu sebuah akun diberi akses ke perusahaan, kontak perusahaan
+     * yang masih kosong diisi dari data akun itu (telepon & email yang
+     * diisi admin saat membuat pengguna) — profil perusahaan langsung
+     * terisi tanpa perusahaan mengetik ulang, dan tetap bisa diubah
+     * perusahaan sendiri setelahnya. Nilai yang sudah ada tidak ditimpa.
+     */
+    private function seedCompanyContact(CompanyMembership $membership): void
+    {
+        if ($membership->status !== CompanyMembership::STATUS_ACTIVE) {
+            return;
+        }
+
+        $membership->loadMissing(['user', 'company']);
+        $user = $membership->user;
+        $company = $membership->company;
+
+        if (! $user || ! $company) {
+            return;
+        }
+
+        $fill = [];
+        if (empty($company->phone) && ! empty($user->phone)) {
+            $fill['phone'] = $user->phone;
+        }
+        if (empty($company->email) && ! empty($user->email)) {
+            $fill['email'] = $user->email;
+        }
+
+        if ($fill !== []) {
+            $company->fill($fill)->save();
+        }
     }
 
     public function update(Request $request, CompanyMembership $companyMembership): JsonResponse
@@ -157,6 +193,8 @@ class CompanyMembershipController extends Controller
             $validated['reason'] ?? null,
             $companyMembership->capabilities ?? []
         );
+
+        $this->seedCompanyContact($companyMembership);
 
         $companyMembership->load(['user:id,name,username,email,role', 'company:id,name,industry']);
 
