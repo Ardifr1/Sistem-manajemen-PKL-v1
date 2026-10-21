@@ -7,6 +7,7 @@ import { DetailPerusahaan } from "../../components/role/detail-perusahaan.jsx";
  */
 function PerusahaanPartnerSiswa({ onMeta, readonly = false }) {
   const [companies, setCompanies] = useState([]);
+  const [loadError, setLoadError] = useState("");
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
@@ -15,8 +16,11 @@ function PerusahaanPartnerSiswa({ onMeta, readonly = false }) {
     onMeta?.({ title: "Perusahaan Partner", subtitle: readonly ? "Arsip — read only" : "Daftar perusahaan mitra sekolah" });
     (async () => {
       try {
-        const res = await companiesApi.index({ is_partner: true }).catch(() => ({ data: [] }));
+        const res = await companiesApi.index({ is_partner: true });
         setCompanies(res?.data ?? []);
+      } catch {
+        // Error API harus terlihat sebagai error, bukan daftar kosong.
+        setLoadError("Gagal memuat daftar perusahaan. Periksa koneksi, lalu muat ulang halaman.");
       } finally { setLoading(false); }
     })();
   }, [onMeta, readonly]);
@@ -42,7 +46,9 @@ function PerusahaanPartnerSiswa({ onMeta, readonly = false }) {
               value={q} onChange={(e) => setQ(e.target.value)} />
           </span>
         </div>
-        {loading ? <p className="siswa-muted">Memuat…</p> : list.length === 0 ? (
+        {loading ? <p className="siswa-muted">Memuat…</p> : loadError ? (
+          <div className="siswa-err">{loadError}</div>
+        ) : list.length === 0 ? (
           <div className="siswa-empty"><i className="fa-solid fa-building"></i>Tidak ada perusahaan ditemukan.</div>
         ) : (
           <div className="siswa-grid2">

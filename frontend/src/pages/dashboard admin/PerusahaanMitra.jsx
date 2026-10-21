@@ -9,6 +9,32 @@ import {
 import { SkelCards } from "../../components/role/skeleton.jsx";
 import "./admin-pages.css";
 
+// Badge kemitraan: terpisah dari status aktif/nonaktif.
+function PartnerBadge({ c }) {
+  return c.is_partner
+    ? <span className="zip-badge b-green">Mitra</span>
+    : <span className="zip-badge b-gray">Nonmitra</span>;
+}
+
+// Badge verifikasi sekolah untuk perusahaan nonmitra. Perusahaan mitra
+// lama memiliki verification_status NULL dan tetap sah (mitra langsung).
+function VerificationBadge({ c }) {
+  switch (c.verification_status) {
+    case "verified":
+      return <span className="zip-badge b-blue">Terverifikasi</span>;
+    case "pending_school_verification":
+      return <span className="zip-badge b-amber">Menunggu Verifikasi</span>;
+    case "rejected":
+      return <span className="zip-badge b-red">Ditolak</span>;
+    default:
+      return (
+        <span className="zip-badge b-gray">
+          {c.is_partner ? "Mitra Langsung" : "Belum Terverifikasi"}
+        </span>
+      );
+  }
+}
+
 // Kapabilitas keanggotaan perusahaan (PRD bagian C) — sama dengan backend.
 const CAPABILITIES = [
   { value: "company_admin", label: "Admin Perusahaan" },
@@ -328,7 +354,9 @@ function PerusahaanPartner({ onMeta }) {
           <h3 className="zip-card-title">{c.name}</h3>
           <div className="zip-detail-grid">
             <div><span className="zip-label">Bidang</span><div>{c.industry || "-"}</div></div>
-            <div><span className="zip-label">Status</span><div>{c.is_active ? "Aktif" : "Nonaktif"}</div></div>
+            <div><span className="zip-label">Status Aktif</span><div>{c.is_active ? "Aktif" : "Nonaktif"}</div></div>
+            <div><span className="zip-label">Kemitraan</span><div><PartnerBadge c={c} /></div></div>
+            <div><span className="zip-label">Verifikasi</span><div><VerificationBadge c={c} /></div></div>
             <div><span className="zip-label">Telepon</span><div>{c.phone || "-"}</div></div>
             <div><span className="zip-label">Email</span><div>{c.email || "-"}</div></div>
           </div>
@@ -532,6 +560,10 @@ function PerusahaanPartner({ onMeta }) {
             <div className="zip-row" key={c.id}>
               <span className="zip-row-text" style={{ flex: 1 }}>
                 <strong>{c.name}</strong> • {c.industry || "-"} • {c.is_active ? "Aktif" : "Nonaktif"}
+                <span style={{ display: "inline-flex", gap: 6, marginLeft: 8, verticalAlign: "middle" }}>
+                  <PartnerBadge c={c} />
+                  <VerificationBadge c={c} />
+                </span>
                 <span className="zip-progress" style={{ marginTop: 6, maxWidth: 220 }}>
                   <span className="zip-progress-bar" style={{ width: `${(Number(c.student_quota) || 0) > 0 ? Math.min(100, Math.round((terisiOf(c.id) / (Number(c.student_quota) || 1)) * 100)) : 0}%` }} />
                 </span>

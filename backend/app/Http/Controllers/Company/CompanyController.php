@@ -4,26 +4,38 @@ namespace App\Http\Controllers\Company;
 
 use App\Http\Controllers\Controller;
 use App\Models\Company;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class CompanyController extends Controller
 {
+    use ResolvesCompanyAccess;
+
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'is_partner' => ['nullable', 'boolean'],
             'verification_status' => ['nullable', 'string', 'max:40'],
         ]);
 
         $query = Company::query()->orderBy('name');
 
-        if (array_key_exists('is_partner', $validated)) {
-            $query->where('is_partner', (bool) $validated['is_partner']);
+        // Query string selalu tiba sebagai string ("true"/"false"/"1"/"0").
+        // Request::boolean() menafsirkan bentuk-bentuk itu dengan benar,
+        // sedangkan aturan validasi 'boolean' menolak string "true"/"false"
+        // sehingga daftar perusahaan untuk siswa selalu kosong (422).
+        if ($request->filled('is_partner')) {
+            $query->where('is_partner', $request->boolean('is_partner'));
         }
 
         if (! empty($validated['verification_status'])) {
             $query->where('verification_status', $validated['verification_status']);
+        }
+
+        // Daftar yang dilihat siswa hanya memuat perusahaan aktif. Peran
+        // pengelola (admin dan lainnya) tetap melihat semua perusahaan.
+        if ($request->user()?->role === 'student') {
+            $query->where('is_active', true);
         }
 
         $companies = $query->get();
@@ -73,13 +85,29 @@ class CompanyController extends Controller
 
     public function update(Request $request, Company $company): JsonResponse
     {
-        // Perubahan data perusahaan hanya oleh admin
-        // (is_partner/is_active menentukan business rule pemilihan PKL).
-        if ($request->user()->role !== 'admin') {
-            abort(403);
+        $user = $request->user();
+        $isAdmin = $user->role === 'admin';
+
+        if (! $isAdmin) {
+            // Admin Perusahaan / pembimbing yang berwenang atas perusahaan
+            // INI boleh memperbarui data operasional perusahaannya sendiri
+            // (bidang, kontak, kuota, keahlian, dokumen). Manipulasi ID ke
+            // perusahaan lain ditolak lewat cek kewenangan.
+            if (
+                ! in_array($user->role, ['company', 'supervisor'], true)
+                || ! $this->isAuthorizedForCompany($user, $company->id)
+            ) {
+                abort(403);
+            }
+
+            // Status kemitraan, aktivasi, dan verifikasi menentukan aturan
+            // bisnis pemilihan PKL — hanya Admin Sekolah yang boleh mengubah.
+            if ($request->hasAny(['is_partner', 'is_active', 'verification_status'])) {
+                abort(403, 'Status kemitraan, aktivasi, dan verifikasi hanya dapat diubah Admin Sekolah.');
+            }
         }
 
-        $validated = $request->validate([
+        $rules = [
             'name' => ['sometimes', 'string', 'max:255'],
             'industry' => ['sometimes', 'nullable', 'string', 'max:255'],
             'description' => ['sometimes', 'nullable', 'string'],
@@ -89,9 +117,14 @@ class CompanyController extends Controller
             'student_quota' => ['sometimes', 'integer', 'min:0'],
             'required_skills' => ['sometimes', 'nullable', 'string'],
             'required_documents' => ['sometimes', 'nullable', 'string'],
-            'is_partner' => ['sometimes', 'boolean'],
-            'is_active' => ['sometimes', 'boolean'],
-        ]);
+        ];
+
+        if ($isAdmin) {
+            $rules['is_partner'] = ['sometimes', 'boolean'];
+            $rules['is_active'] = ['sometimes', 'boolean'];
+        }
+
+        $validated = $request->validate($rules);
 
         $company->update($validated);
 

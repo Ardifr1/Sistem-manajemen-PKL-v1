@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { companiesApi, applicationsApi, authApi, companyProposalsApi } from "../../api/index.js";
+import { companiesApi, applicationsApi, authApi, companyProposalsApi, periodsApi } from "../../api/index.js";
 import { SkelCards } from "../../components/role/skeleton.jsx";
 import { DetailPerusahaan } from "../../components/role/detail-perusahaan.jsx";
 
@@ -8,6 +8,8 @@ import { DetailPerusahaan } from "../../components/role/detail-perusahaan.jsx";
 function PilihPerusahaan({ onMeta }) {
   const navigate = useNavigate();
   const [companies, setCompanies] = useState([]);
+  const [loadError, setLoadError] = useState("");
+  const [periodId, setPeriodId] = useState(null);
   const [apps, setApps] = useState([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
@@ -27,18 +29,29 @@ function PilihPerusahaan({ onMeta }) {
     onMeta?.({ title: "Pilih Perusahaan", subtitle: "Tentukan tempat PKL impianmu" });
     (async () => {
       try {
-        const [cRes, vRes, aRes, pRes] = await Promise.all([
-          companiesApi.index({ is_partner: true }).catch(() => ({ data: [] })),
-          companiesApi.index({ is_partner: false, verification_status: "verified" }).catch(() => ({ data: [] })),
-          applicationsApi.index().catch(() => ({ data: [] })),
-          companyProposalsApi.index().catch(() => ({ data: [] })),
+        // Kegagalan memuat daftar perusahaan harus tampil sebagai error,
+        // bukan daftar kosong — siswa perlu tahu datanya gagal diambil.
+        const [cRes, vRes] = await Promise.all([
+          companiesApi.index({ is_partner: true }),
+          companiesApi.index({ is_partner: false, verification_status: "verified" }),
         ]);
         // Mitra resmi + nonmitra terverifikasi sama-sama dapat dilamar;
         // dibedakan lewat badge di kartu.
         setCompanies([...(cRes?.data ?? []), ...(vRes?.data ?? [])]);
-        setApps(aRes?.data ?? []);
-        setProposals(pRes?.data ?? []);
-      } finally { setLoading(false); }
+      } catch {
+        setLoadError("Gagal memuat daftar perusahaan. Periksa koneksi, lalu muat ulang halaman.");
+      }
+      const [aRes, pRes, perRes] = await Promise.all([
+        applicationsApi.index().catch(() => ({ data: [] })),
+        companyProposalsApi.index().catch(() => ({ data: [] })),
+        periodsApi.index().catch(() => ({ data: [] })),
+      ]);
+      setApps(aRes?.data ?? []);
+      setProposals(pRes?.data ?? []);
+      // Pengajuan wajib menyertakan periode PKL yang sedang aktif.
+      const aktif = (perRes?.data ?? []).find((p) => p.is_active);
+      setPeriodId(aktif ? aktif.id : null);
+      setLoading(false);
     })();
   }, [onMeta]);
 
@@ -87,11 +100,15 @@ function PilihPerusahaan({ onMeta }) {
       setMsg("Maksimal 3 pilihan perusahaan untuk satu periode PKL.");
       return;
     }
+    if (!periodId) {
+      setMsg("Belum ada periode PKL aktif. Pengajuan belum dapat dikirim.");
+      return;
+    }
     setSending(c.id);
     setMsg("");
     try {
       await applicationsApi.store({
-        student_id: user?.id, company_id: c.id, choice_order: choiceOrder,
+        student_id: user?.id, company_id: c.id, pkl_period_id: periodId, choice_order: choiceOrder,
       });
       const aRes = await applicationsApi.index().catch(() => ({ data: [] }));
       setApps(aRes?.data ?? []);
@@ -120,7 +137,9 @@ function PilihPerusahaan({ onMeta }) {
         <p className="siswa-muted" style={{ marginTop: 0, marginBottom: 16, fontSize: 12.5 }}>
           Perusahaan mitra dan nonmitra yang telah terverifikasi sekolah.
         </p>
-        {loading ? <SkelCards n={3} /> : list.length === 0 ? (
+        {loading ? <SkelCards n={3} /> : loadError ? (
+          <div className="siswa-err">{loadError}</div>
+        ) : list.length === 0 ? (
           <div className="siswa-empty"><i className="fa-solid fa-building"></i>Tidak ada perusahaan ditemukan.</div>
         ) : (
           <div className="siswa-grid2">
