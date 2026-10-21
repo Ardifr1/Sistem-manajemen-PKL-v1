@@ -159,6 +159,84 @@ class TemporaryPasswordFlowTest extends TestCase
         $this->postJson('/api/logout')->assertOk();
     }
 
+    public function test_forced_change_password_works_without_current_password(): void
+    {
+        Mail::fake();
+        $this->fakeFonnteSuccess();
+        config(['services.fonnte.token' => 'test-fonnte-token']);
+
+        Sanctum::actingAs($this->admin());
+        $this->postJson('/api/users', $this->payload())->assertCreated();
+
+        $user = User::where('email', 'budi@smk.sch.id')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        // Tanpa current_password: sesi baru saja diautentikasi memakai
+        // password sementara itu, jadi tidak perlu diketik ulang.
+        $this->postJson('/api/change-password', [
+            'password' => 'passwordBaru123',
+        ])->assertOk();
+
+        $user->refresh();
+        $this->assertFalse((bool) $user->must_change_password);
+        $this->assertTrue(Hash::check('passwordBaru123', $user->password));
+    }
+
+    public function test_forced_change_with_wrong_current_password_is_rejected(): void
+    {
+        Mail::fake();
+        $this->fakeFonnteSuccess();
+        config(['services.fonnte.token' => 'test-fonnte-token']);
+
+        Sanctum::actingAs($this->admin());
+        $this->postJson('/api/users', $this->payload())->assertCreated();
+
+        $user = User::where('email', 'budi@smk.sch.id')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        // Bila current_password DIKIRIM, nilainya tetap diverifikasi.
+        $this->postJson('/api/change-password', [
+            'current_password' => 'bukanPasswordnya1',
+            'password' => 'passwordBaru123',
+        ])->assertUnprocessable();
+
+        $this->assertTrue((bool) $user->refresh()->must_change_password);
+    }
+
+    public function test_voluntary_change_password_still_requires_current_password(): void
+    {
+        $user = User::create([
+            'name' => 'Pengguna Lama',
+            'username' => 'pengguna_lama',
+            'email' => 'lama@smk.sch.id',
+            'password' => 'passwordLama123',
+            'role' => 'student',
+            'is_active' => true,
+            'must_change_password' => false,
+        ]);
+
+        Sanctum::actingAs($user);
+
+        // Tanpa current_password → ditolak (bukan alur paksa).
+        $this->postJson('/api/change-password', [
+            'password' => 'passwordBaru123',
+        ])->assertUnprocessable();
+
+        // Current password salah → ditolak.
+        $this->postJson('/api/change-password', [
+            'current_password' => 'salahTotal123',
+            'password' => 'passwordBaru123',
+        ])->assertUnprocessable();
+
+        // Current password benar → berhasil.
+        $this->postJson('/api/change-password', [
+            'current_password' => 'passwordLama123',
+            'password' => 'passwordBaru123',
+        ])->assertOk();
+
+        $this->assertTrue(Hash::check('passwordBaru123', $user->refresh()->password));
+    }
+
     public function test_notification_failure_does_not_delete_created_account(): void
     {
         Mail::fake();

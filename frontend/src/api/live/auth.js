@@ -56,13 +56,11 @@ export async function setPassword({ email, token, password, passwordConfirmation
 
 /** Ganti password oleh pengguna login (termasuk kewajiban setelah login pertama). */
 export async function changePassword(current_password, password) {
-  // Backend mewajibkan konfirmasi password (validasi `confirmed`) agar salah
-  // ketik tidak meninggalkan akun dengan password yang tidak diketahui.
-  const res = await client.post(ep.auth.changePassword, {
-    current_password,
-    password,
-    password_confirmation: password,
-  });
+  // current_password hanya dikirim bila diisi — pada ganti password paksa
+  // backend membolehkannya kosong (sesi baru terautentikasi dengannya).
+  const payload = { password };
+  if (current_password) payload.current_password = current_password;
+  const res = await client.post(ep.auth.changePassword, payload);
   try {
     const u = currentUser();
     if (u) {

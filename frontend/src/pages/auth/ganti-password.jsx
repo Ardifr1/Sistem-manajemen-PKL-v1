@@ -11,10 +11,15 @@ function GantiPassword() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Alur paksa (login pertama): pengguna baru saja masuk memakai password
+  // sementaranya, jadi field "Password Saat Ini" tidak ditampilkan —
+  // cukup password baru + konfirmasi. Di luar alur paksa field tetap ada.
+  const forced = !!authApi.currentUser()?.must_change_password;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    if (!current) {
+    if (!forced && !current) {
       setError("Masukkan password saat ini.");
       return;
     }
@@ -28,7 +33,7 @@ function GantiPassword() {
     }
     setLoading(true);
     try {
-      await authApi.changePassword(current, password);
+      await authApi.changePassword(forced ? "" : current, password);
       navigate("/", { replace: true });
     } catch (err) {
       setError(err?.message || "Gagal mengganti password.");
@@ -57,13 +62,15 @@ function GantiPassword() {
         <div className="login-form-wrap">
           <h2 className="login-title">Password Baru Wajib</h2>
           <form className="login-form" onSubmit={handleSubmit} noValidate>
-            <div className="field">
-              <label htmlFor="gp-current">Password Saat Ini</label>
-              <div className="input-wrap">
-                <input id="gp-current" type="password" autoComplete="current-password"
-                  value={current} onChange={(e) => setCurrent(e.target.value)} />
+            {!forced && (
+              <div className="field">
+                <label htmlFor="gp-current">Password Saat Ini</label>
+                <div className="input-wrap">
+                  <input id="gp-current" type="password" autoComplete="current-password"
+                    value={current} onChange={(e) => setCurrent(e.target.value)} />
+                </div>
               </div>
-            </div>
+            )}
             <div className="field">
               <label htmlFor="gp-new">Password Baru</label>
               <div className="input-wrap">
