@@ -16,6 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'password.changed' => \App\Http\Middleware\EnsurePasswordChanged::class,
+            'account.active' => \App\Http\Middleware\EnsureAccountActive::class,
         ]);
         $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
     })

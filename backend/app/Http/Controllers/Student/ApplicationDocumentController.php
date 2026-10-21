@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Student;
 use App\Http\Controllers\Controller;
 use App\Models\ApplicationDocument;
 use App\Models\PklApplication;
+use App\Models\PklPlacement;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -34,7 +35,14 @@ class ApplicationDocumentController extends Controller
                 if ($user->role === 'student') {
                     $q->where('student_id', $user->id);
                 } elseif ($user->role === 'teacher') {
-                    $q->whereHas('student', fn ($s) => $s->where('teacher_id', $user->id));
+                    // Tabel users tidak punya kolom teacher_id; penugasan guru
+                    // ada pada pkl_placements.teacher_id.
+                    $q->whereIn(
+                        'student_id',
+                        PklPlacement::query()
+                            ->where('teacher_id', $user->id)
+                            ->select('student_id')
+                    );
                 } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
                     $companyId = $user->companySupervisor?->company_id;
                     if ($companyId) {

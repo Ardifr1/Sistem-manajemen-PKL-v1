@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
 use App\Models\PasswordResetRequest;
 use App\Models\User;
 use App\Services\AccountInfoNotifier;
@@ -211,6 +212,21 @@ class UserController extends Controller
             ? $this->notifyCredentialsSafely($notifier, $user, $temporaryPassword)
             : null;
 
+        // Jejak audit pembuatan akun — tanpa password/rahasia apa pun.
+        AuditLog::create([
+            'user_id' => $request->user()->id,
+            'action' => 'account.created',
+            'subject_type' => User::class,
+            'subject_id' => $user->id,
+            'metadata' => [
+                'target_user_id' => (int) $user->id,
+                'role' => $user->role,
+                'credential_mode' => $hasExplicitPassword ? 'manual' : 'temporary',
+                'email_status' => $delivery['email']['status'] ?? null,
+                'whatsapp_status' => $delivery['whatsapp']['status'] ?? null,
+            ],
+        ]);
+
         $user->makeHidden('password');
 
         return response()->json([
@@ -269,6 +285,8 @@ class UserController extends Controller
                 ]);
             }
 
+            $this->auditResend($request, $user, 'account.activation_resent', $delivery);
+
             return response()->json([
                 'message' => 'Tautan aktivasi dikirim ulang.',
                 'data' => ['delivery' => $delivery],
@@ -276,11 +294,55 @@ class UserController extends Controller
         }
 
         // 2. Password sementara belum diganti → terbitkan yang baru.
+        //
+        // Hash lama disimpan hanya di memori (bukan plaintext) agar dapat
+        // dipulihkan bila SEMUA kanal gagal: akun tidak boleh tertinggal
+        // memakai password baru yang tidak diketahui siapa pun.
         if ($user->must_change_password) {
             $temporaryPassword = TemporaryPassword::generate();
-            $user->update(['password' => Hash::make($temporaryPassword)]);
 
-            $delivery = $this->notifyCredentialsSafely($notifier, $user->fresh(), $temporaryPassword);
+            // Kunci baris agar dua permintaan kirim ulang tidak saling menimpa.
+            // Hash lama dibaca di dalam kunci sehingga nilai rollback akurat.
+            [$locked, $previousHash, $previousMustChange] = DB::transaction(function () use ($user, $temporaryPassword) {
+                $fresh = User::query()
+                    ->whereKey($user->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                $previousHash = $fresh->password;
+                $previousMustChange = (bool) $fresh->must_change_password;
+
+                $fresh->update(['password' => Hash::make($temporaryPassword)]);
+
+                return [$fresh, $previousHash, $previousMustChange];
+            });
+
+            $delivery = $this->notifyCredentialsSafely($notifier, $locked, $temporaryPassword);
+
+            if (! $this->anyChannelSent($delivery)) {
+                // Rollback atomik: hanya pulihkan bila hash belum diubah
+                // permintaan lain sejak kita menulisnya.
+                User::query()
+                    ->whereKey($locked->id)
+                    ->where('password', $locked->password)
+                    ->update([
+                        'password' => $previousHash,
+                        'must_change_password' => $previousMustChange,
+                    ]);
+
+                $this->auditResend($request, $locked, 'account.credentials_resend_failed', $delivery);
+
+                return response()->json([
+                    'message' => 'Kredensial baru gagal dikirim melalui semua kanal. Password akun tidak diubah.',
+                    'data' => ['delivery' => $delivery],
+                ], 422);
+            }
+
+            // Password benar-benar berubah dan sudah dikirim ke pengguna:
+            // token/sesi lama tidak boleh tetap berlaku.
+            $locked->tokens()->delete();
+
+            $this->auditResend($request, $locked, 'account.credentials_resent', $delivery);
 
             return response()->json([
                 'message' => 'Password sementara baru telah dibuat dan dikirim. Password lama tidak berlaku lagi.',
@@ -369,6 +431,29 @@ class UserController extends Controller
         }
     }
 
+    /**
+     * Catat tindakan kirim ulang pada audit log.
+     *
+     * Hanya status kanal yang dicatat — password, token, dan tautan aktivasi
+     * tidak pernah masuk log.
+     *
+     * @param  array<string, array{status?:string}>  $delivery
+     */
+    private function auditResend(Request $request, User $user, string $action, array $delivery): void
+    {
+        AuditLog::create([
+            'user_id' => $request->user()?->id,
+            'action' => $action,
+            'subject_type' => User::class,
+            'subject_id' => $user->id,
+            'metadata' => [
+                'target_user_id' => (int) $user->id,
+                'email_status' => $delivery['email']['status'] ?? null,
+                'whatsapp_status' => $delivery['whatsapp']['status'] ?? null,
+            ],
+        ]);
+    }
+
     /** @param array<string, array{status?:string}> $delivery */
     private function anyChannelSent(array $delivery): bool
     {
@@ -455,24 +540,88 @@ class UserController extends Controller
             ],
         ]);
 
+        $actor = $request->user();
+        $isAdmin = $actor->role === 'admin';
+        $targetIsSelf = (int) $actor->id === (int) $user->id;
+
         // Non-admin hanya boleh memperbarui profilnya sendiri — jangan biarkan
         // mereka mengubah role/is_active (pencegahan eskalasi hak akses).
-        if ($request->user()->role !== 'admin') {
+        if (! $isAdmin) {
             unset($validated['role'], $validated['is_active']);
+
+            // Password tidak boleh ditetapkan lewat endpoint ini: jalur yang sah
+            // adalah /change-password (wajib memverifikasi password saat ini).
+            if (array_key_exists('password', $validated)) {
+                return response()->json([
+                    'message' => 'Password hanya dapat diubah melalui fitur ganti password.',
+                ], 403);
+            }
         }
+
+        $adminSetPassword = false;
 
         if (
             isset($validated['password']) &&
             $validated['password'] !== null
         ) {
+            // Admin yang mengatur password pengguna lain: pengguna wajib
+            // menggantinya saat login berikutnya.
+            $adminSetPassword = $isAdmin && ! $targetIsSelf;
+
             $validated['password'] = Hash::make(
                 $validated['password']
             );
+
+            if ($adminSetPassword) {
+                $validated['must_change_password'] = true;
+            }
         } else {
             unset($validated['password']);
         }
 
+        $previousRole = $user->role;
+        $previousActive = (bool) $user->is_active;
+
         $user->update($validated);
+
+        if ($adminSetPassword) {
+            // Password diganti admin → sesi lama pengguna tidak boleh tetap aktif.
+            $user->tokens()->delete();
+        }
+
+        // Jejak audit untuk perubahan sensitif (tanpa nilai password).
+        if ($isAdmin) {
+            $changed = [];
+
+            if (array_key_exists('role', $validated) && $validated['role'] !== $previousRole) {
+                $changed[] = 'role';
+            }
+
+            if (array_key_exists('is_active', $validated) && (bool) $validated['is_active'] !== $previousActive) {
+                $changed[] = 'is_active';
+            }
+
+            if ($adminSetPassword) {
+                $changed[] = 'password';
+            }
+
+            if ($changed !== []) {
+                AuditLog::create([
+                    'user_id' => $actor->id,
+                    'action' => 'account.updated',
+                    'subject_type' => User::class,
+                    'subject_id' => $user->id,
+                    'old_status' => $previousActive ? 'active' : 'inactive',
+                    'new_status' => $user->is_active ? 'active' : 'inactive',
+                    'metadata' => [
+                        'target_user_id' => (int) $user->id,
+                        'changed' => $changed,
+                        'old_role' => $previousRole,
+                        'new_role' => $user->role,
+                    ],
+                ]);
+            }
+        }
 
         $user->makeHidden('password');
 

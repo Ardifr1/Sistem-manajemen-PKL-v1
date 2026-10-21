@@ -5,11 +5,14 @@ namespace App\Http\Controllers\Company;
 use App\Http\Controllers\Controller;
 use App\Models\Interview;
 use App\Models\PklApplication;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class InterviewController extends Controller
 {
+    use ResolvesCompanyAccess;
+
     /**
      * Interview dijadwalkan oleh perusahaan/pembimbing.
      * Siswa hanya boleh melihat interview atas lamarannya sendiri.
@@ -100,6 +103,17 @@ class InterviewController extends Controller
         ]);
 
         $application = PklApplication::findOrFail($validated['application_id']);
+
+        // Perusahaan/pembimbing industri hanya boleh menjadwalkan interview
+        // untuk lamaran yang ditujukan ke perusahaannya. Tanpa pemeriksaan ini
+        // siapa pun dengan role company/supervisor dapat membuat interview
+        // sekaligus mengubah status lamaran milik perusahaan lain.
+        if (
+            in_array($request->user()->role, ['company', 'supervisor'], true)
+            && ! $this->isAuthorizedForCompany($request->user(), (int) $application->company_id)
+        ) {
+            abort(403, 'Lamaran ini bukan milik perusahaan Anda.');
+        }
 
         $interview = Interview::create($validated);
         $interview->load(['application.company', 'application.student']);

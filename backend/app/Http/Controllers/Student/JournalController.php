@@ -30,19 +30,12 @@ class JournalController extends Controller
         if (! empty($validated['placement_id'])) {
             $placement = PklPlacement::findOrFail($validated['placement_id']);
 
-            if (
-                $user->role === 'student'
-                && $placement->student_id !== $user->id
-            ) {
+            // Otorisasi per-penempatan mengikuti policy yang sama dengan
+            // endpoint detail: siswa (pemilik), guru (bimbingan), perusahaan,
+            // dan pembimbing industri (BR-09a). Sebelumnya pembimbing industri
+            // dapat membaca jurnal penempatan mana pun lewat placement_id.
+            if (! Gate::forUser($user)->check('view', $placement)) {
                 abort(403);
-            }
-
-            if ($user->role === 'company') {
-                $companyId = $user->companySupervisor?->company_id;
-
-                if (!$companyId || $placement->company_id !== $companyId) {
-                    abort(403);
-                }
             }
 
             $query->where('placement_id', $validated['placement_id']);

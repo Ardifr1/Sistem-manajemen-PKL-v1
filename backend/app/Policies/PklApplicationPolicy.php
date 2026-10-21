@@ -12,10 +12,15 @@ class PklApplicationPolicy
 
     public function viewAny(User $user): bool
     {
+        // Perusahaan/pembimbing industri juga memerlukan daftar lamaran untuk
+        // meninjau lamaran yang ditujukan ke perusahaannya. Cakupan datanya
+        // dibatasi pada perusahaannya di controller (bukan seluruh data).
         return in_array($user->role, [
             'admin',
             'teacher',
             'student',
+            'company',
+            'supervisor',
         ], true);
     }
 

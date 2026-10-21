@@ -32,24 +32,47 @@ class PklApplicationController extends Controller
         $query = PklApplication::with(['company', 'pklPeriod'])
             ->orderBy('choice_order');
 
-        if (! empty($validated['student_id'])) {
-            if ($user->role === 'student' && (int) $validated['student_id'] !== $user->id) {
+        // Cakupan data SELALU dibatasi sesuai peran, termasuk saat filter
+        // student_id dikirim. Tanpa ini, filter student_id menjadi celah IDOR
+        // (guru/perusahaan dapat membaca lamaran siswa lain).
+        if ($user->role === 'student') {
+            if (! empty($validated['student_id']) && (int) $validated['student_id'] !== (int) $user->id) {
                 abort(403);
             }
-            $query->where('student_id', $validated['student_id']);
-        } else {
-            // Tanpa student_id: batasi sesuai role
-            if ($user->role === 'student') {
-                $query->where('student_id', $user->id);
-            } elseif ($user->role === 'teacher') {
-                $query->whereHas('student', fn ($q) => $q->where('teacher_id', $user->id));
-            } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
-                $companyId = $user->companySupervisor?->company_id;
-                if ($companyId) {
-                    $query->where('company_id', $companyId);
+
+            $query->where('student_id', $user->id);
+        } elseif ($user->role === 'teacher') {
+            // Siswa bimbingan guru ditentukan lewat pkl_placements.teacher_id
+            // (tabel users tidak memiliki kolom teacher_id).
+            $assignedStudentIds = PklPlacement::query()
+                ->where('teacher_id', $user->id)
+                ->select('student_id');
+
+            if (! empty($validated['student_id'])) {
+                $requested = (int) $validated['student_id'];
+                $isAssigned = PklPlacement::query()
+                    ->where('teacher_id', $user->id)
+                    ->where('student_id', $requested)
+                    ->exists();
+
+                if (! $isAssigned) {
+                    abort(403);
                 }
             }
-            // admin: semua
+
+            $query->whereIn('student_id', $assignedStudentIds);
+        } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
+            $companyIds = $this->authorizedCompanyIds($user);
+
+            if ($companyIds === []) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('company_id', $companyIds);
+            }
+        }
+
+        if (! empty($validated['student_id'])) {
+            $query->where('student_id', $validated['student_id']);
         }
 
         if (isset($validated['pkl_period_id'])) {

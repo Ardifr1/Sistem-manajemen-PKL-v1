@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Models\PklPlacement;
 use App\Models\StudentProfile;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -11,6 +13,8 @@ use Illuminate\Validation\Rule;
 
 class StudentProfileController extends Controller
 {
+    use ResolvesCompanyAccess;
+
     public function index(Request $request): JsonResponse
     {
         // Hanya admin/guru yang dapat menelusuri seluruh profil siswa.
@@ -47,8 +51,28 @@ class StudentProfileController extends Controller
         // Student hanya dapat melihat profil miliknya sendiri.
         if (
             $user->role === 'student'
-            && $studentProfile->user_id !== $user->id
+            && (int) $studentProfile->user_id !== (int) $user->id
         ) {
+            abort(403);
+        }
+
+        // Perusahaan/pembimbing industri hanya boleh melihat profil siswa yang
+        // ditempatkan di perusahaannya (data pribadi tidak boleh lintas
+        // perusahaan/penempatan).
+        if (in_array($user->role, ['company', 'supervisor'], true)) {
+            $companyIds = $this->authorizedCompanyIds($user);
+
+            $related = $companyIds !== [] && PklPlacement::query()
+                ->where('student_id', $studentProfile->user_id)
+                ->whereIn('company_id', $companyIds)
+                ->exists();
+
+            if (! $related) {
+                abort(403);
+            }
+        }
+
+        if (! in_array($user->role, ['admin', 'teacher', 'student', 'company', 'supervisor'], true)) {
             abort(403);
         }
 

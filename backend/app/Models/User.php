@@ -39,6 +39,17 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
 
+    protected static function booted(): void
+    {
+        // Penonaktifan akun harus langsung mencabut token yang sudah terbit,
+        // agar sesi lama tidak tetap memiliki akses.
+        static::updated(function (User $user) {
+            if ($user->wasChanged('is_active') && ! $user->is_active) {
+                $user->tokens()->delete();
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [
