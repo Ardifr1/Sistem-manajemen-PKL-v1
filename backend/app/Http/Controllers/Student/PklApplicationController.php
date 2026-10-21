@@ -8,6 +8,7 @@ use App\Models\Company;
 use App\Models\PklApplication;
 use App\Models\PklPeriod;
 use App\Models\PklPlacement;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use App\Support\PlacementQuota;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -17,6 +18,8 @@ use Illuminate\Support\Facades\Gate;
 
 class PklApplicationController extends Controller
 {
+    use ResolvesCompanyAccess;
+
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', PklApplication::class);
@@ -34,20 +37,26 @@ class PklApplicationController extends Controller
                 abort(403);
             }
             $query->where('student_id', $validated['student_id']);
-        } else {
-            // Tanpa student_id: batasi sesuai role
-            if ($user->role === 'student') {
-                $query->where('student_id', $user->id);
-            } elseif ($user->role === 'teacher') {
-                $query->whereHas('student', fn ($q) => $q->where('teacher_id', $user->id));
-            } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
-                $companyId = $user->companySupervisor?->company_id;
-                if ($companyId) {
-                    $query->where('company_id', $companyId);
-                }
-            }
-            // admin: semua
+        } elseif ($user->role === 'student') {
+            $query->where('student_id', $user->id);
         }
+
+        // Batasan per peran selalu berlaku, juga bila student_id diberikan.
+        if ($user->role === 'teacher') {
+            // Siswa bimbingan guru ditentukan lewat pkl_placements.teacher_id
+            // (tabel users tidak memiliki kolom teacher_id).
+            $query->whereHas('student.placements', fn ($p) => $p->where('teacher_id', $user->id));
+        } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
+            // Keanggotaan aktif + tautan pembimbing lama; tanpa kewenangan
+            // perusahaan mana pun, daftar harus kosong (bukan semua data).
+            $companyIds = $this->authorizedCompanyIds($user);
+            if ($companyIds === []) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('company_id', $companyIds);
+            }
+        }
+        // admin: semua
 
         if (isset($validated['pkl_period_id'])) {
             $query->where('pkl_period_id', $validated['pkl_period_id']);

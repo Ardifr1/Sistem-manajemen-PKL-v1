@@ -12,10 +12,15 @@ class PklApplicationPolicy
 
     public function viewAny(User $user): bool
     {
+        // Perusahaan & pembimbing industri juga boleh membuka daftar —
+        // isi daftar dibatasi controller ke perusahaan kewenangannya,
+        // dan guru ke siswa bimbingannya.
         return in_array($user->role, [
             'admin',
             'teacher',
             'student',
+            'company',
+            'supervisor',
         ], true);
     }
 
