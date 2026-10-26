@@ -437,14 +437,20 @@ class QuotaAndPeriodLogicTest extends TestCase
         ]);
     }
 
-    public function test_student_cannot_create_new_application_while_active_exists(): void
+    /**
+     * Aturan lama ("satu lamaran aktif memblokir lamaran baru") digantikan
+     * aturan maksimal 3 lamaran aktif: satu lamaran pending tidak lagi
+     * menghalangi lamaran berikutnya selama slot masih tersedia. Batas 3
+     * yang menolak diuji di MaxThreeApplicationsTest.
+     */
+    public function test_student_can_create_new_application_while_slots_remain(): void
     {
         $student = $this->createUser('student', 'student_a');
         $companyA = $this->createCompany('PT Satu');
         $companyB = $this->createCompany('PT Dua');
         $period = $this->createPeriod();
 
-        // Satu pilihan ditolak, satu masih pending -> masih ada yang aktif.
+        // Satu pilihan ditolak, satu masih pending -> masih ada slot.
         $this->makeApplicationFor($student, $companyA, $period)
             ->update(['status' => 'rejected']);
         $this->makeApplicationFor($student, $companyB, $period, 2);
@@ -458,7 +464,7 @@ class QuotaAndPeriodLogicTest extends TestCase
             'company_id' => $companyC->id,
             'pkl_period_id' => $period->id,
             'choice_order' => 3,
-        ])->assertStatus(422);
+        ])->assertCreated();
     }
 
     public function test_new_application_still_respects_partner_and_duplicate_rules(): void

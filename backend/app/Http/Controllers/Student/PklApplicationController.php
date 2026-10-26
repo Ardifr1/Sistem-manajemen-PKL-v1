@@ -8,6 +8,7 @@ use App\Models\Company;
 use App\Models\PklApplication;
 use App\Models\PklPeriod;
 use App\Models\PklPlacement;
+use App\Models\User;
 use App\Policies\Concerns\ResolvesCompanyAccess;
 use App\Support\PlacementQuota;
 use Illuminate\Database\QueryException;
@@ -144,67 +145,105 @@ class PklApplicationController extends Controller
             ], 422);
         }
 
-        // Setelah seluruh pilihan ditolak, siswa boleh mengajukan pendaftaran baru.
-        // Selama masih ada pendaftaran yang aktif/relevan (pending/approved/accepted),
-        // pendaftaran baru tidak diizinkan agar aturan maksimal 3 pilihan
-        // dan riwayat pendaftaran tetap konsisten.
-        $hasActiveApplication = PklApplication::query()
-            ->where('student_id', $validated['student_id'])
-            ->where('pkl_period_id', $validated['pkl_period_id'])
-            ->whereNot('status', 'rejected')
-            ->exists();
+        // Aturan maksimal 3 lamaran aktif: lamaran berstatus Diajukan,
+        // Dalam Seleksi, Interview, atau Diterima TIDAK memblokir pengajuan
+        // berikutnya selama slot masih tersedia; lamaran Ditolak tidak
+        // dihitung sebagai lamaran aktif dan riwayatnya tetap tersimpan.
+        // Pemeriksaan jumlah, duplikasi, dan pembuatan lamaran berjalan
+        // dalam satu transaksi dengan kunci pada baris siswa — dua request
+        // bersamaan untuk siswa yang sama diproses berurutan sehingga
+        // batas 3 tidak dapat dilampaui. Baris users dipilih sebagai kunci
+        // karena selalu ada (student_id sudah tervalidasi) dan stabil
+        // untuk pasangan siswa-periode; pemilihan final mengunci baris
+        // yang sama terlebih dahulu sehingga pengajuan dan pemilihan
+        // final untuk siswa yang sama juga saling berurutan.
+        try {
+            $result = DB::transaction(function () use ($validated) {
+                User::query()
+                    ->whereKey($validated['student_id'])
+                    ->lockForUpdate()
+                    ->first();
 
-        if ($hasActiveApplication) {
+                // Setelah placement final dibuat untuk periode ini, siswa
+                // tidak boleh mengajukan lamaran baru. Penempatan yang
+                // dibatalkan tidak menghalangi (konsisten dengan hitungan
+                // kuota yang mengabaikan placement cancelled).
+                $hasFinalPlacement = PklPlacement::query()
+                    ->where('student_id', $validated['student_id'])
+                    ->where('pkl_period_id', $validated['pkl_period_id'])
+                    ->where('status', '!=', 'cancelled')
+                    ->exists();
+
+                if ($hasFinalPlacement) {
+                    return ['error' => 'Siswa sudah memiliki penempatan final pada periode ini, sehingga tidak dapat mengajukan lamaran baru.'];
+                }
+
+                $activeCount = PklApplication::query()
+                    ->where('student_id', $validated['student_id'])
+                    ->where('pkl_period_id', $validated['pkl_period_id'])
+                    ->whereNot('status', 'rejected')
+                    ->count();
+
+                if ($activeCount >= 3) {
+                    return ['error' => 'Maksimal 3 pilihan perusahaan untuk satu periode PKL.'];
+                }
+
+                // Perusahaan yang pernah dipilih tidak dapat dipilih ulang
+                // pada periode yang sama: application rejected tetap menjadi
+                // riwayat (juga dipaksa oleh unique constraint
+                // student-company-period pada level database).
+                $duplicateCompany = PklApplication::query()
+                    ->where('student_id', $validated['student_id'])
+                    ->where('pkl_period_id', $validated['pkl_period_id'])
+                    ->where('company_id', $validated['company_id'])
+                    ->exists();
+
+                if ($duplicateCompany) {
+                    return ['error' => 'Perusahaan tersebut sudah dipilih.'];
+                }
+
+                // choice_order hanya bertabrakan dengan lamaran aktif lain;
+                // nomor pilihan dari lamaran yang ditolak boleh dipakai lagi
+                // (tidak ada unique constraint student-period-choice_order
+                // di database).
+                $duplicateChoiceOrder = PklApplication::query()
+                    ->where('student_id', $validated['student_id'])
+                    ->where('pkl_period_id', $validated['pkl_period_id'])
+                    ->whereNot('status', 'rejected')
+                    ->where('choice_order', $validated['choice_order'])
+                    ->exists();
+
+                if ($duplicateChoiceOrder) {
+                    return ['error' => 'Urutan pilihan tersebut sudah digunakan.'];
+                }
+
+                $application = PklApplication::create([
+                    ...$validated,
+                    'status' => 'pending',
+                ]);
+
+                return ['application' => $application];
+            });
+        } catch (QueryException $e) {
+            // Balapan penulisan yang lolos dari kunci (mis. unique
+            // student-company-period): perlakukan sebagai duplikasi.
+            if ($e->getCode() === '23000') {
+                return response()->json([
+                    'message' => 'Perusahaan tersebut sudah dipilih.',
+                ], 422);
+            }
+
+            throw $e;
+        }
+
+        if (isset($result['error'])) {
             return response()->json([
-                'message' => 'Siswa masih memiliki pendaftaran PKL yang aktif pada periode ini.',
+                'message' => $result['error'],
             ], 422);
         }
 
-        $existingCount = PklApplication::query()
-            ->where('student_id', $validated['student_id'])
-            ->where('pkl_period_id', $validated['pkl_period_id'])
-            ->whereNot('status', 'rejected')
-            ->count();
-
-        if ($existingCount >= 3) {
-            return response()->json([
-                'message' => 'Maksimal 3 pilihan perusahaan untuk satu periode PKL.',
-            ], 422);
-        }
-
-        // Company yang pernah dipilih tidak dapat dipilih ulang pada periode yang
-        // sama: application rejected tetap menjadi riwayat (juga dipaksa oleh
-        // unique constraint student-company-period pada level database).
-        $duplicateCompany = PklApplication::query()
-            ->where('student_id', $validated['student_id'])
-            ->where('pkl_period_id', $validated['pkl_period_id'])
-            ->where('company_id', $validated['company_id'])
-            ->exists();
-
-        if ($duplicateCompany) {
-            return response()->json([
-                'message' => 'Perusahaan tersebut sudah dipilih.',
-            ], 422);
-        }
-
-        $duplicateChoiceOrder = PklApplication::query()
-            ->where('student_id', $validated['student_id'])
-            ->where('pkl_period_id', $validated['pkl_period_id'])
-            ->whereNot('status', 'rejected')
-            ->where('choice_order', $validated['choice_order'])
-            ->exists();
-
-        if ($duplicateChoiceOrder) {
-            return response()->json([
-                'message' => 'Urutan pilihan tersebut sudah digunakan.',
-            ], 422);
-        }
-
-        $application = PklApplication::create([
-            ...$validated,
-            'status' => 'pending',
-        ]);
-
+        /** @var PklApplication $application */
+        $application = $result['application'];
         $application->load(['company', 'pklPeriod']);
 
         return response()->json([
@@ -254,6 +293,17 @@ class PklApplicationController extends Controller
 
         try {
             $result = DB::transaction(function () use ($pklApplication, $company, $period, $request) {
+                // Kunci baris siswa terlebih dahulu agar dua pemilihan final
+                // bersamaan untuk siswa yang sama (dari tawaran berbeda)
+                // diproses berurutan. Pengajuan baru mengunci baris yang sama
+                // sehingga pengajuan dan pemilihan final juga saling
+                // berurutan. Unique constraint student-period pada placements
+                // tetap menjadi pengaman terakhir.
+                User::query()
+                    ->whereKey($pklApplication->student_id)
+                    ->lockForUpdate()
+                    ->first();
+
                 // Idempotensi: siswa sudah punya penempatan di periode ini
                 // (mis. klik ganda) — jangan buat lagi.
                 $alreadyPlaced = PklPlacement::query()
