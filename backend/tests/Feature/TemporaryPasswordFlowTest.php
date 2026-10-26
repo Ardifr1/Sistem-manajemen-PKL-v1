@@ -280,6 +280,13 @@ class TemporaryPasswordFlowTest extends TestCase
         );
 
         // Token B sudah tidak bisa dipakai; token A masih bisa.
+        // Guard Sanctum dalam proses tes yang sama masih menyimpan user
+        // dari request ganti password (token A), sehingga probe token B
+        // harus dipaksa resolusi ulang — kalau tidak, request ini lolos
+        // memakai sisa autentikasi request sebelumnya meski token B sudah
+        // terhapus dari database (assertion pluck di atas membuktikannya).
+        $this->app['auth']->forgetGuards();
+
         $this->withToken($tokenB->plainTextToken)
             ->getJson('/api/company-proposals')->assertUnauthorized();
         $this->withToken($tokenA->plainTextToken)
