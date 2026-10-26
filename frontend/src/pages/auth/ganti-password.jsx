@@ -33,7 +33,7 @@ function GantiPassword() {
     }
     setLoading(true);
     try {
-      await authApi.changePassword(forced ? "" : current, password);
+      await authApi.changePassword(forced ? "" : current, password, password2);
       navigate("/", { replace: true });
     } catch (err) {
       setError(err?.message || "Gagal mengganti password.");

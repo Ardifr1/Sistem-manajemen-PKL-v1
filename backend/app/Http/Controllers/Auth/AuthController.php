@@ -8,6 +8,8 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthController extends Controller
 {
@@ -123,7 +125,10 @@ class AuthController extends Controller
                 $user->must_change_password ? 'nullable' : 'required',
                 'string',
             ],
-            'password' => ['required', 'string', 'min:8'],
+            // Konfirmasi wajib cocok (rule `confirmed` membaca
+            // password_confirmation) — halaman ganti password memang
+            // selalu mengumpulkan konfirmasi dari pengguna.
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
         ]);
 
         if (
@@ -135,11 +140,28 @@ class AuthController extends Controller
             ], 422);
         }
 
+        // Password baru tidak boleh sama persis dengan password saat ini.
+        if (Hash::check($validated['password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'password' => ['Password baru tidak boleh sama dengan password saat ini.'],
+            ]);
+        }
+
         $user->update([
             'password' => $validated['password'],
             'must_change_password' => false,
             'activated_at' => $user->activated_at ?? now(),
         ]);
+
+        // Cabut sesi/token LAIN milik pengguna ini — hanya sesi yang
+        // sedang dipakai mengganti password yang dipertahankan, supaya
+        // sesi lama di perangkat lain tidak ikut terbawa password baru.
+        $currentToken = $user->currentAccessToken();
+        if ($currentToken instanceof PersonalAccessToken) {
+            $user->tokens()->whereKeyNot($currentToken->id)->delete();
+        } else {
+            $user->tokens()->delete();
+        }
 
         return response()->json([
             'message' => 'Password berhasil diganti.',

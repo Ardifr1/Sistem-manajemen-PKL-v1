@@ -175,6 +175,7 @@ class TemporaryPasswordFlowTest extends TestCase
         // password sementara itu, jadi tidak perlu diketik ulang.
         $this->postJson('/api/change-password', [
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertOk();
 
         $user->refresh();
@@ -198,6 +199,7 @@ class TemporaryPasswordFlowTest extends TestCase
         $this->postJson('/api/change-password', [
             'current_password' => 'bukanPasswordnya1',
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertUnprocessable();
 
         $this->assertTrue((bool) $user->refresh()->must_change_password);
@@ -220,21 +222,68 @@ class TemporaryPasswordFlowTest extends TestCase
         // Tanpa current_password → ditolak (bukan alur paksa).
         $this->postJson('/api/change-password', [
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertUnprocessable();
 
         // Current password salah → ditolak.
         $this->postJson('/api/change-password', [
             'current_password' => 'salahTotal123',
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertUnprocessable();
 
         // Current password benar → berhasil.
         $this->postJson('/api/change-password', [
             'current_password' => 'passwordLama123',
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertOk();
 
         $this->assertTrue(Hash::check('passwordBaru123', $user->refresh()->password));
+    }
+
+    public function test_change_password_requires_confirmation_rejects_same_and_revokes_other_sessions(): void
+    {
+        // createUser memakai password 'password123' & must_change_password
+        // false — alur ganti password sukarela.
+        $user = $this->createUser('student', 'konfirmasi_sesi');
+
+        $tokenA = $user->createToken('sesi-a');
+        $tokenB = $user->createToken('sesi-b');
+
+        // Tanpa konfirmasi password → 422 dengan error di field password.
+        $this->withToken($tokenA->plainTextToken)
+            ->postJson('/api/change-password', [
+                'current_password' => 'password123',
+                'password' => 'PasswordBaru123',
+            ])->assertUnprocessable()->assertJsonValidationErrors('password');
+
+        // Password baru sama dengan password saat ini → 422.
+        $this->withToken($tokenA->plainTextToken)
+            ->postJson('/api/change-password', [
+                'current_password' => 'password123',
+                'password' => 'password123',
+                'password_confirmation' => 'password123',
+            ])->assertUnprocessable()->assertJsonValidationErrors('password');
+
+        // Ganti yang valid → berhasil; sesi lain dicabut, sesi ini bertahan.
+        $this->withToken($tokenA->plainTextToken)
+            ->postJson('/api/change-password', [
+                'current_password' => 'password123',
+                'password' => 'PasswordBaru123',
+                'password_confirmation' => 'PasswordBaru123',
+            ])->assertOk();
+
+        $this->assertSame(
+            [$tokenA->accessToken->id],
+            $user->tokens()->pluck('id')->all()
+        );
+
+        // Token B sudah tidak bisa dipakai; token A masih bisa.
+        $this->withToken($tokenB->plainTextToken)
+            ->getJson('/api/company-proposals')->assertUnauthorized();
+        $this->withToken($tokenA->plainTextToken)
+            ->getJson('/api/company-proposals')->assertOk();
     }
 
     public function test_notification_failure_does_not_delete_created_account(): void
