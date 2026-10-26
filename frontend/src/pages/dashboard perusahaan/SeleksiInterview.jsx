@@ -11,6 +11,8 @@ function SeleksiInterview({ onMeta }) {
   const [aksiMsg, setAksiMsg] = useState("");
   const [aksiError, setAksiError] = useState("");
   const [memutuskan, setMemutuskan] = useState(false);
+  const [mintaAlasan, setMintaAlasan] = useState(false);
+  const [alasanGagal, setAlasanGagal] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
@@ -111,16 +113,19 @@ function SeleksiInterview({ onMeta }) {
 
   const appOfSelected = selected ? allApps.find((x) => String(x.id) === String(selected.application_id)) : null;
 
-  // Keputusan hasil interview. Berbeda dari versi lama: error TIDAK lagi
-  // ditelan diam-diam (dulu .catch(() => {}) sehingga tombol tampak tidak
-  // melakukan apa-apa), dan selalu ada pesan sukses/gagal yang terlihat.
-  const putuskan = async (hasil) => {
-    if (!selected || memutuskan) return;
+  // Keputusan hasil interview. Error TIDAK ditelan diam-diam (dulu
+  // .catch(() => {}) sehingga tombol tampak tidak melakukan apa-apa),
+  // dan selalu ada pesan sukses/gagal yang terlihat. Mengembalikan true
+  // bila kedua langkah berhasil.
+  const putuskan = async (hasil, note) => {
+    if (!selected || memutuskan) return false;
     setAksiMsg("");
     setAksiError("");
     setMemutuskan(true);
     try {
-      const res = await interviewsApi.update(selected.id, { status: "done", result: hasil });
+      const payload = { status: "done", result: hasil };
+      if (hasil === "failed" && note) payload.note = note;
+      const res = await interviewsApi.update(selected.id, payload);
       if (selected.application_id) {
         await applicationsApi.update(selected.application_id, { status: hasil === "passed" ? "accepted" : "rejected" });
       }
@@ -129,12 +134,31 @@ function SeleksiInterview({ onMeta }) {
         ? "Siswa dinyatakan lulus dan lamaran diterima. Siswa kini dapat memilih tawaran ini di Pilih Final."
         : "Siswa dinyatakan tidak lulus dan lamaran ditolak.");
       await load();
+      return true;
     } catch (e) {
       setAksiError(e?.message || "Gagal memperbarui hasil interview.");
+      return false;
     } finally {
       setMemutuskan(false);
     }
   };
+
+  // Alasan wajib diisi sebelum siswa dinyatakan tidak lulus; alasan
+  // disimpan sebagai catatan interview (tampil sebagai "Catatan" di panel).
+  const konfirmasiGagal = async () => {
+    if (!alasanGagal.trim()) {
+      setAksiError("Tulis alasan tidak lulus terlebih dahulu.");
+      return;
+    }
+    const ok = await putuskan("failed", alasanGagal.trim());
+    if (ok) {
+      setMintaAlasan(false);
+      setAlasanGagal("");
+    }
+  };
+
+  // Interview yang sudah diputuskan tidak lagi menampilkan tombol keputusan.
+  const sudahDiputuskan = selected?.result === "passed" || selected?.result === "failed";
 
   return (
     <div className="zip-page">
@@ -144,7 +168,7 @@ function SeleksiInterview({ onMeta }) {
           <h3 className="zip-card-title" style={{ marginTop: 0 }}>Jadwal Interview</h3>
           {items.length === 0 && <div className="zip-muted">Belum ada jadwal interview.</div>}
           {items.map((x) => (
-            <div key={x.id} className={`zip-iv${selected?.id === x.id ? " active" : ""}`} onClick={() => { setSelected(x); setAksiMsg(""); setAksiError(""); }}>
+            <div key={x.id} className={`zip-iv${selected?.id === x.id ? " active" : ""}`} onClick={() => { setSelected(x); setAksiMsg(""); setAksiError(""); setMintaAlasan(false); setAlasanGagal(""); }}>
               <span className={`zip-badge ${x.status === "done" ? "b-green" : x.status === "cancelled" ? "b-red" : "b-blue"}`} style={{ float: "right" }}>
                 {x.status === "done" ? "Selesai" : x.status === "cancelled" ? "Batal" : "Terjadwal"}
               </span>
@@ -171,10 +195,25 @@ function SeleksiInterview({ onMeta }) {
               {aksiError && <div className="zip-error" style={{ marginTop: 12 }}>{aksiError}</div>}
               {aksiMsg && <div className="zip-success" style={{ marginTop: 12 }}>{aksiMsg}</div>}
               <div className="zip-actions" style={{ marginTop: 14 }}>
-                <button type="button" className="zip-btn-success" disabled={memutuskan} onClick={() => putuskan("passed")}>Lulus & Terima</button>
-                <button type="button" className="zip-btn-danger" disabled={memutuskan} onClick={() => putuskan("failed")}>Tidak Lulus</button>
+                {!sudahDiputuskan && !mintaAlasan && (
+                  <>
+                    <button type="button" className="zip-btn-success" disabled={memutuskan} onClick={() => putuskan("passed")}>Lulus & Terima</button>
+                    <button type="button" className="zip-btn-danger" disabled={memutuskan} onClick={() => { setMintaAlasan(true); setAksiMsg(""); setAksiError(""); }}>Tidak Lulus</button>
+                  </>
+                )}
                 <button type="button" className="zip-btn-outline" onClick={() => jadwalUlang(selected)}>Jadwal Ulang</button>
               </div>
+              {mintaAlasan && !sudahDiputuskan && (
+                <div style={{ marginTop: 12 }}>
+                  <label className="zip-field" style={{ display: "block" }}><span>Alasan tidak lulus</span>
+                    <textarea value={alasanGagal} onChange={(e) => setAlasanGagal(e.target.value)} placeholder="Tulis alasan kenapa siswa tidak lulus…" rows={3} style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: 14, marginTop: 6 }} />
+                  </label>
+                  <div className="zip-actions" style={{ marginTop: 8 }}>
+                    <button type="button" className="zip-btn-danger" disabled={memutuskan} onClick={konfirmasiGagal}>Konfirmasi Tidak Lulus</button>
+                    <button type="button" className="zip-btn-outline" onClick={() => { setMintaAlasan(false); setAlasanGagal(""); }}>Batal</button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
