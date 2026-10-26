@@ -7,6 +7,10 @@ function SeleksiInterview({ onMeta }) {
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
   const [apps, setApps] = useState([]);
+  const [allApps, setAllApps] = useState([]);
+  const [aksiMsg, setAksiMsg] = useState("");
+  const [aksiError, setAksiError] = useState("");
+  const [memutuskan, setMemutuskan] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
@@ -22,6 +26,7 @@ function SeleksiInterview({ onMeta }) {
       const ivs = Array.isArray(ir) ? ir : ir?.data || [];
       const a = Array.isArray(ar) ? ar : ar?.data || [];
       setItems(ivs);
+      setAllApps(a);
       setApps(a.filter((x) => ["pending", "interview"].includes(x.status)));
       if (ivs[0] && !selected) setSelected(ivs[0]);
     } finally {
@@ -96,6 +101,41 @@ function SeleksiInterview({ onMeta }) {
     return a ? `${a.student?.name || "-"} • ${a.position || a.division || "-"}` : "-";
   };
 
+  const statusLamaran = (s) =>
+    s === "accepted" ? "Diterima" :
+    s === "rejected" ? "Ditolak" :
+    s === "interview" ? "Interview" :
+    s === "seleksi" ? "Dalam Seleksi" :
+    s === "approved" ? "Disetujui (penempatan)" :
+    s === "pending" ? "Diajukan" : (s || "—");
+
+  const appOfSelected = selected ? allApps.find((x) => String(x.id) === String(selected.application_id)) : null;
+
+  // Keputusan hasil interview. Berbeda dari versi lama: error TIDAK lagi
+  // ditelan diam-diam (dulu .catch(() => {}) sehingga tombol tampak tidak
+  // melakukan apa-apa), dan selalu ada pesan sukses/gagal yang terlihat.
+  const putuskan = async (hasil) => {
+    if (!selected || memutuskan) return;
+    setAksiMsg("");
+    setAksiError("");
+    setMemutuskan(true);
+    try {
+      const res = await interviewsApi.update(selected.id, { status: "done", result: hasil });
+      if (selected.application_id) {
+        await applicationsApi.update(selected.application_id, { status: hasil === "passed" ? "accepted" : "rejected" });
+      }
+      if (res?.data) setSelected(res.data);
+      setAksiMsg(hasil === "passed"
+        ? "Siswa dinyatakan lulus dan lamaran diterima. Siswa kini dapat memilih tawaran ini di Pilih Final."
+        : "Siswa dinyatakan tidak lulus dan lamaran ditolak.");
+      await load();
+    } catch (e) {
+      setAksiError(e?.message || "Gagal memperbarui hasil interview.");
+    } finally {
+      setMemutuskan(false);
+    }
+  };
+
   return (
     <div className="zip-page">
       {loading && <div className="zip-muted">Memuat…</div>}
@@ -104,7 +144,7 @@ function SeleksiInterview({ onMeta }) {
           <h3 className="zip-card-title" style={{ marginTop: 0 }}>Jadwal Interview</h3>
           {items.length === 0 && <div className="zip-muted">Belum ada jadwal interview.</div>}
           {items.map((x) => (
-            <div key={x.id} className={`zip-iv${selected?.id === x.id ? " active" : ""}`} onClick={() => setSelected(x)}>
+            <div key={x.id} className={`zip-iv${selected?.id === x.id ? " active" : ""}`} onClick={() => { setSelected(x); setAksiMsg(""); setAksiError(""); }}>
               <span className={`zip-badge ${x.status === "done" ? "b-green" : x.status === "cancelled" ? "b-red" : "b-blue"}`} style={{ float: "right" }}>
                 {x.status === "done" ? "Selesai" : x.status === "cancelled" ? "Batal" : "Terjadwal"}
               </span>
@@ -124,20 +164,15 @@ function SeleksiInterview({ onMeta }) {
               <div className="zip-kv"><span>Tempat / Link</span><b>{selected.place || "-"}</b></div>
               <div className="zip-kv"><span>Status</span><b>{selected.status === "done" ? "Selesai" : selected.status === "cancelled" ? "Dibatalkan" : "Terjadwal"}</b></div>
               <div className="zip-kv"><span>Hasil</span><b>{selected.result === "passed" ? "Lulus" : selected.result === "failed" ? "Tidak lulus" : "-"}</b></div>
+              <div className="zip-kv"><span>Lamaran</span><b>{appOfSelected ? statusLamaran(appOfSelected.status) : "—"}</b></div>
               {selected.note && (
                 <div className="zip-note"><i className="fa-solid fa-note-sticky"></i> <strong>Catatan:</strong> {selected.note}</div>
               )}
+              {aksiError && <div className="zip-error" style={{ marginTop: 12 }}>{aksiError}</div>}
+              {aksiMsg && <div className="zip-success" style={{ marginTop: 12 }}>{aksiMsg}</div>}
               <div className="zip-actions" style={{ marginTop: 14 }}>
-                <button type="button" className="zip-btn-success" onClick={async () => {
-                  await interviewsApi.update(selected.id, { status: "done", result: "passed" });
-                  if (selected.application_id) await applicationsApi.update(selected.application_id, { status: "accepted" }).catch(() => {});
-                  await load();
-                }}>Lulus & Terima</button>
-                <button type="button" className="zip-btn-danger" onClick={async () => {
-                  await interviewsApi.update(selected.id, { status: "done", result: "failed" });
-                  if (selected.application_id) await applicationsApi.update(selected.application_id, { status: "rejected" }).catch(() => {});
-                  await load();
-                }}>Tidak Lulus</button>
+                <button type="button" className="zip-btn-success" disabled={memutuskan} onClick={() => putuskan("passed")}>Lulus & Terima</button>
+                <button type="button" className="zip-btn-danger" disabled={memutuskan} onClick={() => putuskan("failed")}>Tidak Lulus</button>
                 <button type="button" className="zip-btn-outline" onClick={() => jadwalUlang(selected)}>Jadwal Ulang</button>
               </div>
             </>
