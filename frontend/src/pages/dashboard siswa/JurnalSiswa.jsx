@@ -205,7 +205,7 @@ export function TulisJurnal({ onMeta, placement }) {
           <label className="siswa-field">
             <span>Teknologi / Tools</span>
             <input className="siswa-input" value={form.teknologi} onChange={set("teknologi")}
-              placeholder="cth: Laravel • Postman" />
+              placeholder="cth: Laravel • Postman • Figma • Photoshop" />
           </label>
         </div>
         <label className="siswa-field">
