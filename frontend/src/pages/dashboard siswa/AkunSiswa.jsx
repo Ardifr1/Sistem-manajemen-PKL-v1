@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ep } from "../../api/endpoints.js";
 import { API_BASE_URL, getToken } from "../../api/client.js";
-import { authApi, profilesApi, documentsApi, applicationsApi } from "../../api/index.js";
+import { authApi, profilesApi, documentsApi, applicationsApi, placementsApi, periodsApi } from "../../api/index.js";
 
 function initials(name) {
   const p = String(name || "?").trim().split(/\s+/);
@@ -13,6 +13,8 @@ function initials(name) {
 export function ProfilSiswa({ onMeta }) {
   const user = authApi.currentUser();
   const [profil, setProfil] = useState(null);
+  // undefined = masih memuat, null = tidak ada periode yang bisa ditampilkan.
+  const [periode, setPeriode] = useState(undefined);
 
   useEffect(() => {
     onMeta?.({ title: "Profil Saya", subtitle: "Data diri siswa" });
@@ -22,13 +24,40 @@ export function ProfilSiswa({ onMeta }) {
         setProfil((res?.data ?? [])[0] || null);
       } catch { /* abaikan */ }
     })();
+    (async () => {
+      try {
+        // Periode dari penempatan aktif siswa; kalau belum ditempatkan,
+        // pakai periode yang sedang berjalan di sekolah.
+        const pRes = await placementsApi.index({ student_id: user?.id, status: "active" }).catch(() => ({ data: [] }));
+        let periodId = (pRes?.data ?? [])[0]?.pkl_period_id || null;
+        if (!periodId) {
+          const all = await periodsApi.index().catch(() => ({ data: [] }));
+          periodId = (all?.data ?? []).find((p) => p.is_active)?.id || null;
+        }
+        if (!periodId) { setPeriode(null); return; }
+        const p = await periodsApi.show(periodId).catch(() => null);
+        setPeriode(p?.data || null);
+      } catch { setPeriode(null); }
+    })();
   }, [onMeta, user?.id]);
+
+  const fmtDate = (d) => {
+    if (!d) return "";
+    try {
+      return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+    } catch { return ""; }
+  };
+  const periodeText =
+    periode === undefined ? "…" :
+    !periode ? "—" :
+    `${periode.name}${periode.start_date && periode.end_date ? ` (${fmtDate(periode.start_date)} – ${fmtDate(periode.end_date)})` : ""}`;
 
   const rows = [
     ["Nama Lengkap", user?.name || "—"],
     ["NIS", profil?.nis || user?.nis || "—"],
     ["Kelas", profil?.kelas || user?.kelas || "—"],
     ["Jurusan", profil?.jurusan || "—"],
+    ["Periode PKL", periodeText],
     ["Email", user?.email || "—"],
     ["No. HP", profil?.phone || user?.phone || "—"],
     ["Alamat", profil?.address || "—"],
