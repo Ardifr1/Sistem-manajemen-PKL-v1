@@ -21,13 +21,19 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    if (!login || !password) {
+    // Pangkas spasi di awal/akhir: menempel email/password dari WhatsApp
+    // sering ikut membawa spasi/baris baru yang tak terlihat, dan backend
+    // membandingkan password secara persis sehingga satu spasi saja
+    // membuat login ditolak.
+    const loginId = login.trim();
+    const pass = password.trim();
+    if (!loginId || !pass) {
       setError("Email atau password salah. Coba lagi.");
       return;
     }
     setLoading(true);
     try {
-      const res = await authApi.login({ email: login, password });
+      const res = await authApi.login({ email: loginId, password: pass });
       if (res?.data?.user?.must_change_password) {
         navigate("/ganti-password", { replace: true });
       } else {
