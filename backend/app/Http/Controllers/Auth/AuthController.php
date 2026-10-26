@@ -143,8 +143,13 @@ class AuthController extends Controller
             ! empty($validated['current_password'])
             && Hash::check($validated['password'], $user->password)
         ) {
+            // Pesan dipertahankan (dipakai tes hardening), ditambah struktur
+            // errors agar klien bisa menampilkan kesalahan per-field.
             return response()->json([
                 'message' => 'Password baru tidak boleh sama dengan password saat ini.',
+                'errors' => [
+                    'password' => ['Password baru tidak boleh sama dengan password saat ini.'],
+                ],
             ], 422);
         }
 
@@ -154,7 +159,16 @@ class AuthController extends Controller
             'activated_at' => $user->activated_at ?? now(),
         ]);
 
-        $user->tokens()->delete();
+        // Cabut sesi lain, tapi pertahankan sesi yang sedang mengganti
+        // password: frontend langsung kembali ke dashboard dengan token
+        // yang sama setelah ganti password berhasil.
+        $currentToken = $request->user()->currentAccessToken();
+
+        if ($currentToken) {
+            $user->tokens()->where('id', '!=', $currentToken->id)->delete();
+        } else {
+            $user->tokens()->delete();
+        }
 
         AuditLog::create([
             'user_id' => $user->id,
