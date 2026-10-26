@@ -97,6 +97,13 @@ export const ep = {
     store: "/pkl-placements",
     update: id("/pkl-placements"),
     destroy: id("/pkl-placements"),
+    // Penugasan pembimbing industri oleh perusahaan penempatan
+    // (hanya supervisor_id; field lain tetap kewenangan admin).
+    assignSupervisor: (placementId) => `/pkl-placements/${placementId}/supervisor`,
+  },
+  // AI Journal Assistant (diproses backend; API key tidak pernah di frontend).
+  ai: {
+    journalAssistant: "/journals/ai-assistant",
   },
   journals: {
     index: "/journals",

@@ -140,17 +140,32 @@ class JournalPolicyTest extends TestCase
         ]);
     }
 
-    public function test_teacher_can_view_journal(): void
+    public function test_teacher_can_view_journal_of_assigned_student(): void
     {
         $student = $this->createStudent('student_a', 'Siswa A');
         $journal = $this->createJournalForStudent($student);
 
         $teacher = $this->createUser('teacher', 'teacher_a');
+        $journal->placement->update(['teacher_id' => $teacher->id]);
 
         Sanctum::actingAs($teacher);
 
         $this->getJson("/api/journals/{$journal->id}")
             ->assertOk();
+    }
+
+    public function test_teacher_cannot_view_journal_of_unsupervised_student(): void
+    {
+        $student = $this->createStudent('student_a', 'Siswa A');
+        $journal = $this->createJournalForStudent($student);
+
+        // Guru lain yang tidak ditugaskan pada siswa tersebut.
+        $otherTeacher = $this->createUser('teacher', 'teacher_b');
+
+        Sanctum::actingAs($otherTeacher);
+
+        $this->getJson("/api/journals/{$journal->id}")
+            ->assertForbidden();
     }
 
     private function createUser(string $role, string $username): User

@@ -8,8 +8,10 @@ return [
     |--------------------------------------------------------------------------
     |
     | Atur origin yang diizinkan via env CORS_ALLOWED_ORIGINS (pisahkan koma).
-    | Default mengizinkan localhost + semua subdomain trycloudflare.com
-    | (untuk akses via tunnel dari HP).
+    | Hanya localhost/127.0.0.1 yang diizinkan secara default untuk pengembangan.
+    | Origin lain (termasuk tunnel sementara) HARUS didaftarkan eksplisit —
+    | wildcard domain publik tidak dipakai karena siapa pun dapat membuat
+    | tunnel di domain tersebut dan mengirim permintaan ber-kredensial.
     |
     */
 
@@ -22,7 +24,6 @@ return [
     'allowed_origins_patterns' => [
         '#^http://localhost(:\d+)?$#',
         '#^http://127\.0\.0\.1(:\d+)?$#',
-        '#^https?://([a-z0-9-]+\.)*trycloudflare\.com$#',
     ],
 
     'allowed_headers' => ['*'],

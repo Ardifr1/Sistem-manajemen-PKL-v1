@@ -96,6 +96,14 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by('change-pw:'.($request->user()?->id ?? $request->ip()));
         });
 
+        // AI Journal Assistant: batasi per siswa agar biaya/kuota provider
+        // terkendali dan penyalahgunaan endpoint tidak membebani server.
+        RateLimiter::for('ai-journal', function (Request $request) {
+            return Limit::perMinute(
+                max(1, (int) config('simagang.ai.rate_limit_per_minute', 8))
+            )->by('ai-journal:'.($request->user()?->id ?? $request->ip()));
+        });
+
         RateLimiter::for('resend-credentials', function (Request $request) {
             $target = $request->route('user');
 

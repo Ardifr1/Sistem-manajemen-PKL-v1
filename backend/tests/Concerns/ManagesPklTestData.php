@@ -262,14 +262,15 @@ trait ManagesPklTestData
     protected function attachCompanyMembership(
         User $user,
         Company $company,
-        array $capabilities = ['company_admin'],
-        bool $isActive = true
+        string $status = CompanyMembership::STATUS_ACTIVE,
+        array $capabilities = ['company_admin']
     ): CompanyMembership {
         return CompanyMembership::create([
             'user_id' => $user->id,
             'company_id' => $company->id,
+            'status' => $status,
             'capabilities' => $capabilities,
-            'is_active' => $isActive,
+            'granted_at' => now(),
         ]);
     }
 }

@@ -4,14 +4,12 @@ namespace App\Policies;
 
 use App\Models\Journal;
 use App\Models\User;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 
 class JournalPolicy
 {
-    /**
-     * Admin dan Guru dapat melihat daftar jurnal.
-     * Siswa hanya dapat melihat jurnal miliknya.
-     * Industri dapat melihat jurnal penempatan di perusahaannya.
-     */
+    use ResolvesCompanyAccess;
+
     public function viewAny(User $user): bool
     {
         if (in_array($user->role, [
@@ -22,27 +20,30 @@ class JournalPolicy
             return true;
         }
 
-        if ($user->role === 'company' && $user->companySupervisor !== null) {
+        if (in_array($user->role, ['company', 'supervisor'], true)) {
+            return $this->authorizedCompanyIds($user) !== [];
+        }
+
+        return false;
+    }
+
+    public function view(User $user, Journal $journal): bool
+    {
+        if ($user->role === 'admin') {
             return true;
         }
 
-        return $user->role === 'supervisor'
-            && $user->companySupervisor !== null;
-    }
-
-    /**
-     * Menentukan apakah user boleh melihat jurnal tertentu.
-     */
-    public function view(User $user, Journal $journal): bool
-    {
-        if ($user->role === 'admin' || $user->role === 'teacher') {
-            return true;
+        // Guru Pembimbing hanya boleh membaca jurnal siswa bimbingannya
+        // (pkl_placements.teacher_id), konsisten dengan scoping index.
+        if ($user->role === 'teacher') {
+            return $journal->placement
+                && $journal->placement->teacher_id !== null
+                && (int) $journal->placement->teacher_id === (int) $user->id;
         }
 
         if ($user->role === 'company') {
             return $journal->placement
-                && $user->companySupervisor
-                && $journal->placement->company_id === $user->companySupervisor->company_id;
+                && $this->isAuthorizedForCompany($user, $journal->placement->company_id);
         }
 
         if ($user->role === 'supervisor') {

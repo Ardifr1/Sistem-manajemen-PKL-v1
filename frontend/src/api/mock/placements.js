@@ -42,6 +42,18 @@ export async function update(id, payload) {
   return ok("Penempatan PKL berhasil diperbarui.", row);
 }
 
+/**
+ * Perusahaan menetapkan/mengganti pembimbing industri (hanya supervisor_id),
+ * meniru PATCH /pkl-placements/{id}/supervisor.
+ */
+export async function assignSupervisor(id, supervisorId) {
+  await delay();
+  const row = db.find((r) => r.id === Number(id));
+  if (!row) throw Object.assign(new Error("Penempatan tidak ditemukan."), { status: 404 });
+  row.supervisor_id = supervisorId ?? null;
+  return ok("Pembimbing industri berhasil ditugaskan.", row);
+}
+
 export async function destroy(id) {
   await delay();
   const i = db.findIndex((r) => r.id === Number(id));

@@ -5,16 +5,21 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\Company;
+use App\Models\CompanySupervisor;
 use App\Models\PklApplication;
 use App\Models\PklPlacement;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use App\Support\PlacementQuota;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Rule;
 
 class PklPlacementController extends Controller
 {
+    use ResolvesCompanyAccess;
+
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', PklPlacement::class);
@@ -64,17 +69,31 @@ class PklPlacementController extends Controller
             $query->where('student_id', $user->id);
         } elseif ($user->role === 'teacher') {
             $query->where('teacher_id', $user->id);
-        } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
-            $companyId = $user->companySupervisor?->company_id;
-            if ($companyId) {
-                $query->where('company_id', $companyId);
-            } else {
+        } elseif ($user->role === 'company') {
+            $companyIds = $this->authorizedCompanyIds($user);
+            if ($companyIds === []) {
                 // Belum ditautkan: kembalikan kosong
                 return response()->json([
                     'message' => 'Data penempatan PKL berhasil diambil.',
                     'data' => [],
                 ]);
             }
+            $query->whereIn('company_id', $companyIds);
+        } elseif ($user->role === 'supervisor') {
+            $supervisor = $user->companySupervisor;
+
+            if (! $supervisor) {
+                // Belum ditautkan: kembalikan kosong
+                return response()->json([
+                    'message' => 'Data penempatan PKL berhasil diambil.',
+                    'data' => [],
+                ]);
+            }
+
+            // BR-09a: pembimbing industri hanya melihat penempatan yang
+            // secara spesifik ditugaskan kepadanya (supervisor_id), bukan
+            // seluruh penempatan pada perusahaannya.
+            $query->where('supervisor_id', $supervisor->id);
         }
 
         return response()->json([
@@ -118,12 +137,21 @@ class PklPlacementController extends Controller
             'teacher_id' => [
                 'nullable',
                 'integer',
-                'exists:users,id',
+                Rule::exists('users', 'id')
+                    ->where(fn ($query) => $query->where('role', 'teacher')),
             ],
             'supervisor_id' => [
                 'nullable',
                 'integer',
-                'exists:company_supervisors,id',
+                Rule::exists('company_supervisors', 'id')
+                    ->where(fn ($query) => $query
+                        ->where('company_id', (int) $request->input('company_id'))
+                        ->whereIn(
+                            'user_id',
+                            DB::table('users')
+                                ->select('id')
+                                ->where('role', 'supervisor')
+                        )),
             ],
             'pkl_period_id' => [
                 'required',
@@ -291,6 +319,10 @@ class PklPlacementController extends Controller
     ): JsonResponse {
         Gate::authorize('update', $pklPlacement);
 
+        // Perusahaan efektif saat validasi: bila payload memindahkan
+        // penempatan, pembimbing industri harus terkait dengan perusahaan baru.
+        $companyIdForValidation = (int) $request->input('company_id', $pklPlacement->company_id);
+
         $validated = $request->validate([
             'company_id' => [
                 'sometimes',
@@ -301,13 +333,22 @@ class PklPlacementController extends Controller
                 'sometimes',
                 'nullable',
                 'integer',
-                'exists:users,id',
+                Rule::exists('users', 'id')
+                    ->where(fn ($query) => $query->where('role', 'teacher')),
             ],
             'supervisor_id' => [
                 'sometimes',
                 'nullable',
                 'integer',
-                'exists:company_supervisors,id',
+                Rule::exists('company_supervisors', 'id')
+                    ->where(fn ($query) => $query
+                        ->where('company_id', $companyIdForValidation)
+                        ->whereIn(
+                            'user_id',
+                            DB::table('users')
+                                ->select('id')
+                                ->where('role', 'supervisor')
+                        )),
             ],
             'start_date' => [
                 'sometimes',
@@ -325,51 +366,102 @@ class PklPlacementController extends Controller
             ],
         ]);
 
-        // Cek duplikat tanggal jika start_date/end_date diubah: validasi after_or_equal:start_date
-        // tidak bekerja saat hanya salah satu tanggal dikirim, jadi validasi manual di sini.
-        $startDate = $validated['start_date'] ?? $pklPlacement->start_date;
-        $endDate = $validated['end_date'] ?? $pklPlacement->end_date;
+        $effectiveCompanyId = array_key_exists('company_id', $validated)
+            ? (int) $validated['company_id']
+            : (int) $pklPlacement->company_id;
+        $effectiveSupervisorId = array_key_exists('supervisor_id', $validated)
+            ? $validated['supervisor_id']
+            : $pklPlacement->supervisor_id;
 
-        if (strtotime((string) $endDate) < strtotime((string) $startDate)) {
-            return response()->json([
-                'message' => 'Tanggal selesai tidak boleh lebih awal dari tanggal mulai.',
-            ], 422);
+        // Jaga invariant: pembimbing industri yang melekat pada penempatan
+        // harus berasal dari perusahaan penempatan, termasuk saat penempatan
+        // dipindahkan tanpa menyertakan supervisor_id baru.
+        if ($effectiveSupervisorId !== null) {
+            $supervisorCompanyId = CompanySupervisor::query()
+                ->whereKey($effectiveSupervisorId)
+                ->value('company_id');
+
+            if ((int) $supervisorCompanyId !== $effectiveCompanyId) {
+                return response()->json([
+                    'message' => 'Pembimbing industri tidak terkait dengan perusahaan penempatan. Tetapkan pembimbing industri pengganti atau kosongkan supervisor_id.',
+                ], 422);
+            }
         }
 
         // Perpindahan penempatan ke perusahaan lain wajib melewati pemeriksaan
         // konflik kepentingan, status mitra, dan kuota perusahaan baru.
-        if (isset($validated['company_id'])
-            && (int) $validated['company_id'] !== (int) $pklPlacement->company_id) {
-            $newCompany = Company::findOrFail($validated['company_id']);
+        // Seluruh operasi dibungkus dalam transaksi dengan penguncian baris
+        // perusahaan agar kuota aman dari kondisi balapan.
+        $result = DB::transaction(function () use ($pklPlacement, $validated) {
+            // Tentukan period_id untuk cek kuota.
+            $periodId = (int) ($validated['pkl_period_id'] ?? $pklPlacement->pkl_period_id);
 
-            Gate::authorize('createForCompany', [PklPlacement::class, (int) $newCompany->id]);
+            // Kunci baris perusahaan tujuan (atau perusahaan asal jika tidak pindah)
+            // sebelum memeriksa kuota.
+            $companyIdsToLock = [];
+            if (isset($validated['company_id'])
+                && (int) $validated['company_id'] !== (int) $pklPlacement->company_id) {
+                $companyIdsToLock[] = (int) $validated['company_id'];
+            }
+            // Selalu kunci perusahaan saat ini juga untuk memastikan pelepasan
+            // kuota (via ignorePlacementId) konsisten saat transaksi.
+            $companyIdsToLock[] = (int) $pklPlacement->company_id;
+            $companyIdsToLock = array_unique($companyIdsToLock);
 
-            if (! $newCompany->isUsableForPlacement()) {
-                return response()->json([
-                    'message' => 'Perusahaan belum terverifikasi sebagai mitra aktif sehingga tidak dapat dipakai untuk penempatan.',
-                ], 422);
+            $lockedCompanies = Company::query()
+                ->whereIn('id', $companyIdsToLock)
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            // Validasi dan cek kuota untuk perusahaan baru (jika ada perpindahan).
+            if (isset($validated['company_id'])
+                && (int) $validated['company_id'] !== (int) $pklPlacement->company_id) {
+                $newCompanyId = (int) $validated['company_id'];
+                $newCompany = $lockedCompanies[$newCompanyId] ?? Company::findOrFail($newCompanyId);
+
+                Gate::authorize('createForCompany', [PklPlacement::class, $newCompanyId]);
+
+                if (! $newCompany->isUsableForPlacement()) {
+                    return ['error' => 'Perusahaan belum terverifikasi sebagai mitra aktif sehingga tidak dapat dipakai untuk penempatan.'];
+                }
+
+                $quotaError = PlacementQuota::errorMessage(
+                    $newCompany,
+                    $periodId,
+                    (int) $pklPlacement->id
+                );
+
+                if ($quotaError !== null) {
+                    return ['error' => $quotaError];
+                }
             }
 
-            $quotaError = PlacementQuota::errorMessage(
-                $newCompany,
-                (int) ($validated['pkl_period_id'] ?? $pklPlacement->pkl_period_id),
-                (int) $pklPlacement->id
-            );
+            // Cek duplikat tanggal.
+            $startDate = $validated['start_date'] ?? $pklPlacement->start_date;
+            $endDate = $validated['end_date'] ?? $pklPlacement->end_date;
 
-            if ($quotaError !== null) {
-                return response()->json(['message' => $quotaError], 422);
+            if (strtotime((string) $endDate) < strtotime((string) $startDate)) {
+                return ['error' => 'Tanggal selesai tidak boleh lebih awal dari tanggal mulai.'];
             }
+
+            // Penempatan tidak boleh DIAKTIFKAN sebelum tanggal mulai PKL.
+            if (($validated['status'] ?? null) === 'active'
+                && strtotime((string) $startDate) > strtotime(now()->toDateString())) {
+                return ['error' => 'Penempatan belum dapat diaktifkan sebelum tanggal mulai PKL.'];
+            }
+
+            $pklPlacement->update($validated);
+
+            return ['placement' => $pklPlacement->fresh()];
+        });
+
+        if (isset($result['error'])) {
+            return response()->json(['message' => $result['error']], 422);
         }
 
-        // Penempatan tidak boleh DIAKTIFKAN sebelum tanggal mulai PKL.
-        if (($validated['status'] ?? null) === 'active'
-            && strtotime((string) $startDate) > strtotime(now()->toDateString())) {
-            return response()->json([
-                'message' => 'Penempatan belum dapat diaktifkan sebelum tanggal mulai PKL.',
-            ], 422);
-        }
-
-        $pklPlacement->update($validated);
+        /** @var PklPlacement $placement */
+        $placement = $result['placement'];
 
         $pklPlacement->load([
             'student',
@@ -380,6 +472,71 @@ class PklPlacementController extends Controller
 
         return response()->json([
             'message' => 'Penempatan PKL berhasil diperbarui.',
+            'data' => $pklPlacement,
+        ]);
+    }
+
+    /**
+     * Penugasan pembimbing industri oleh PERUSAHAAN penempatan.
+     *
+     * Endpoint terpisah dari update() agar role company dapat menetapkan atau
+     * mengganti supervisor_id tanpa memperoleh kewenangan mengubah teacher_id,
+     * company_id, status, atau field penempatan lainnya (kewenangan admin).
+     */
+    public function assignSupervisor(
+        Request $request,
+        PklPlacement $pklPlacement
+    ): JsonResponse {
+        Gate::authorize('assignSupervisor', $pklPlacement);
+
+        $validated = $request->validate([
+            'supervisor_id' => [
+                'present',
+                'nullable',
+                'integer',
+                Rule::exists('company_supervisors', 'id')
+                    ->where(fn ($query) => $query
+                        ->where('company_id', (int) $pklPlacement->company_id)
+                        ->whereIn(
+                            'user_id',
+                            DB::table('users')
+                                ->select('id')
+                                ->where('role', 'supervisor')
+                        )),
+            ],
+        ]);
+
+        $previousSupervisorId = $pklPlacement->supervisor_id;
+
+        // Hanya supervisor_id yang ditulis; field lain pada payload diabaikan.
+        $pklPlacement->update([
+            'supervisor_id' => $validated['supervisor_id'],
+        ]);
+
+        AuditLog::create([
+            'user_id' => $request->user()?->id,
+            'action' => 'placement.supervisor_assigned',
+            'subject_type' => PklPlacement::class,
+            'subject_id' => $pklPlacement->id,
+            'placement_id' => $pklPlacement->id,
+            'reason' => 'Perusahaan menetapkan pembimbing industri.',
+            'metadata' => [
+                'company_id' => (int) $pklPlacement->company_id,
+                'student_id' => (int) $pklPlacement->student_id,
+                'old_supervisor_id' => $previousSupervisorId !== null ? (int) $previousSupervisorId : null,
+                'new_supervisor_id' => $validated['supervisor_id'] !== null ? (int) $validated['supervisor_id'] : null,
+            ],
+        ]);
+
+        $pklPlacement->load([
+            'student',
+            'company',
+            'pklPeriod',
+            'application',
+        ]);
+
+        return response()->json([
+            'message' => 'Pembimbing industri berhasil ditugaskan.',
             'data' => $pklPlacement,
         ]);
     }

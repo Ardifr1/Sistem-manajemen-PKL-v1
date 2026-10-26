@@ -5,12 +5,14 @@ namespace App\Http\Controllers;
 use App\Models\Assessment;
 use App\Models\AssessmentComponent;
 use App\Models\PklPlacement;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 
 class AssessmentController extends Controller
 {
+    use ResolvesCompanyAccess;
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', Assessment::class);
@@ -46,26 +48,22 @@ class AssessmentController extends Controller
                 } elseif ($user->role === 'teacher') {
                     $q->where('teacher_id', $user->id);
                 } elseif ($user->role === 'supervisor') {
+                    // BR-09a: hanya penempatan yang ditugaskan kepadanya;
+                    // penempatan tanpa supervisor_id bukan miliknya.
                     $supervisor = $user->companySupervisor;
                     if ($supervisor) {
-                        $q->where(function ($w) use ($supervisor) {
-                            $w->where('supervisor_id', $supervisor->id)
-                                ->orWhere(function ($x) use ($supervisor) {
-                                    $x->whereNull('supervisor_id')
-                                        ->where('company_id', $supervisor->company_id);
-                                });
-                        });
+                        $q->where('supervisor_id', $supervisor->id);
                     } else {
                         $q->whereRaw('1 = 0');
                     }
                 } elseif ($user->role === 'company') {
                     // Scope index company ke perusahaannya sendiri, konsisten
                     // dengan AssessmentPolicy::view (per-placement).
-                    $companyId = $user->companySupervisor?->company_id;
-                    if ($companyId) {
-                        $q->where('company_id', $companyId);
-                    } else {
+                    $companyIds = $this->authorizedCompanyIds($user);
+                    if ($companyIds === []) {
                         $q->whereRaw('1 = 0');
+                    } else {
+                        $q->whereIn('company_id', $companyIds);
                     }
                 }
                 // admin: semua

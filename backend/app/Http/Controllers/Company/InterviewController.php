@@ -28,13 +28,13 @@ class InterviewController extends Controller
 
         // Company/supervisor hanya melihat interview atas lamaran ke perusahaannya.
         if (in_array($user->role, ['company', 'supervisor'], true)) {
-            $query->whereHas('application', function ($q) use ($user) {
-                $q->whereIn(
-                    'company_id',
-                    \App\Models\CompanySupervisor::query()
-                        ->where('user_id', $user->id)
-                        ->select('company_id')
-                );
+            $companyIds = $this->authorizedCompanyIds($user);
+            if ($companyIds === []) {
+                // Belum ditautkan ke perusahaan mana pun: kosong, bukan semua.
+                return $query->whereRaw('1 = 0');
+            }
+            $query->whereHas('application', function ($q) use ($companyIds) {
+                $q->whereIn('company_id', $companyIds);
             });
         }
 

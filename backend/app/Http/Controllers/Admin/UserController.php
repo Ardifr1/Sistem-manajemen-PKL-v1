@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\PasswordResetRequest;
 use App\Models\User;
 use App\Services\AccountInfoNotifier;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use App\Support\PhoneNumber;
 use App\Support\TemporaryPassword;
 use Illuminate\Http\JsonResponse;
@@ -21,6 +22,8 @@ use Throwable;
 
 class UserController extends Controller
 {
+    use ResolvesCompanyAccess;
+
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', User::class);
@@ -63,13 +66,29 @@ class UserController extends Controller
                         ->whereHas('placements', fn ($p) => $p->where('teacher_id', $me->id));
                   });
             });
-        } elseif (in_array($me->role, ['company', 'supervisor'], true)) {
-            $companyId = $me->companySupervisor?->company_id;
-            $query->where(function ($q) use ($me, $companyId) {
+        } elseif ($me->role === 'supervisor') {
+            // BR-09a: pembimbing industri hanya melihat siswa yang secara
+            // spesifik ditugaskan kepadanya, bukan seluruh siswa perusahaannya.
+            $supervisor = $me->companySupervisor;
+            $query->where(function ($q) use ($me, $supervisor) {
                 $q->where('id', $me->id);
-                if ($companyId) {
-                    $q->orWhere(function ($w) use ($companyId) {
-                        $w->where('role', 'student')->whereHas('placements', fn ($p) => $p->where('company_id', $companyId));
+                if ($supervisor) {
+                    $q->orWhere(function ($w) use ($supervisor) {
+                        $w->where('role', 'student')
+                          ->whereHas('placements', fn ($p) => $p->where('supervisor_id', $supervisor->id));
+                    });
+                }
+            });
+        } elseif ($me->role === 'company') {
+            // Kewenangan perusahaan mengikuti keanggotaan aktif (dan tautan
+            // pembimbing lama), bukan hanya satu baris company_supervisors.
+            $companyIds = $this->authorizedCompanyIds($me);
+            $query->where(function ($q) use ($me, $companyIds) {
+                $q->where('id', $me->id);
+                if ($companyIds !== []) {
+                    $q->orWhere(function ($w) use ($companyIds) {
+                        $w->where('role', 'student')
+                          ->whereHas('placements', fn ($p) => $p->whereIn('company_id', $companyIds));
                     });
                 }
             });
@@ -649,6 +668,16 @@ class UserController extends Controller
             return response()->json(['message' => 'Akses ditolak.'], 403);
         }
 
+        // Permintaan yang melewati masa berlaku tidak lagi ditampilkan sebagai
+        // pending agar admin tidak membuat password baru atas permintaan lama.
+        $cutoff = now()->subHours(
+            (int) config('simagang.password_reset.expires_hours', 72)
+        );
+
+        PasswordResetRequest::where('status', 'pending')
+            ->where('created_at', '<', $cutoff)
+            ->update(['status' => 'expired']);
+
         $rows = PasswordResetRequest::with('user:id,name,username,email,role')
             ->where('status', 'pending')
             ->orderByDesc('created_at')
@@ -665,6 +694,24 @@ class UserController extends Controller
     {
         if ($request->user()->role !== 'admin') {
             return response()->json(['message' => 'Akses ditolak.'], 403);
+        }
+
+        if ($resetRequest->status !== 'pending') {
+            return response()->json([
+                'message' => 'Permintaan reset sudah diproses atau kedaluwarsa.',
+            ], 422);
+        }
+
+        $cutoff = now()->subHours(
+            (int) config('simagang.password_reset.expires_hours', 72)
+        );
+
+        if ($resetRequest->created_at !== null && $resetRequest->created_at->lt($cutoff)) {
+            $resetRequest->update(['status' => 'expired']);
+
+            return response()->json([
+                'message' => 'Permintaan reset sudah kedaluwarsa. Pengguna harus mengajukan permintaan baru.',
+            ], 422);
         }
 
         $resetRequest->update(['status' => 'done']);

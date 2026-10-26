@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Models\CompanyMembership;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\ManagesPklTestData;
@@ -260,6 +261,34 @@ class BusinessLogicTest extends TestCase
         ]);
     }
 
+    /**
+     * Placement yang dibuat otomatis via choose() tidak mengandung
+     * teacher_id dan supervisor_id secara otomatis. Penugasan
+     * pembimbing harus dilakukan secara eksplisit (mis. oleh admin).
+     */
+    public function test_choose_creates_placement_without_auto_assigned_supervisors(): void
+    {
+        $student = $this->createUser('student', 'student_a');
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $application = $this->makeApplicationFor($student, $company, $period, 1);
+        $application->update(['status' => 'accepted']);
+
+        Sanctum::actingAs($student);
+
+        $response = $this->postJson("/api/pkl-applications/{$application->id}/choose")->assertOk();
+
+        $placement = \App\Models\PklPlacement::query()
+            ->where('student_id', $student->id)
+            ->where('pkl_period_id', $period->id)
+            ->firstOrFail();
+
+        $this->assertNull($placement->teacher_id, 'teacher_id tidak boleh diisi otomatis');
+        $this->assertNull($placement->supervisor_id, 'supervisor_id tidak boleh diisi otomatis');
+        $this->assertSame('approved', $application->fresh()->status);
+        $this->assertNotNull($response->json('placement.id'));
+    }
+
     // ===================== REVIEW =====================
 
     public function test_company_review_updates_application_status(): void
@@ -512,6 +541,214 @@ class BusinessLogicTest extends TestCase
             'password' => 'rahasia123',
             'password_confirmation' => 'rahasia123',
         ])->assertForbidden();
+    }
+
+    // ===================== COMPANY AUTHORIZATION CONSISTENCY (P1 #5) =====================
+
+    public function test_company_membership_gives_placement_access(): void
+    {
+        // Company dengan keanggotaan aktif (company_memberships) dapat
+        // mengakses data penempatan perusahaan mereka melalui Journal/Attendance.
+        $companyUser = $this->createUser('company', 'company_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $student = $this->createUser('student', 'student_a');
+        $placement = $this->createPlacement($student, $company, $period);
+        // Grant company membership (active)
+        CompanyMembership::create([
+            'user_id' => $companyUser->id,
+            'company_id' => $company->id,
+            'status' => CompanyMembership::STATUS_ACTIVE,
+            'capabilities' => ['company_admin'],
+        ]);
+
+        Sanctum::actingAs($companyUser);
+
+        // Company user dapat melihat journal penempatan perusahaan mereka
+        $this->getJson("/api/journals?placement_id={$placement->id}")
+            ->assertOk();
+
+        // Company user dapat melihat attendance penempatan perusahaan mereka
+        $this->getJson("/api/attendances?placement_id={$placement->id}")
+            ->assertOk();
+    }
+
+    public function test_inactive_company_membership_no_placement_access(): void
+    {
+        // Company dengan keanggotaan nonaktif tidak boleh mengakses
+        // data penempatan perusahaan mereka melalui Journal/Attendance.
+        $companyUser = $this->createUser('company', 'company_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $student = $this->createUser('student', 'student_a');
+        $placement = $this->createPlacement($student, $company, $period);
+        // Grant inactive company membership
+        CompanyMembership::create([
+            'user_id' => $companyUser->id,
+            'company_id' => $company->id,
+            'status' => CompanyMembership::STATUS_INACTIVE,
+            'capabilities' => ['company_admin'],
+        ]);
+
+        Sanctum::actingAs($companyUser);
+
+        // Company user TIDAK boleh melihat journal penempatan (keanggotaan tidak aktif)
+        $this->getJson("/api/journals?placement_id={$placement->id}")
+            ->assertStatus(403);
+
+        // Company user TIDAK boleh melihat attendance penempatan (keanggotaan tidak aktif)
+        $this->getJson("/api/attendances?placement_id={$placement->id}")
+            ->assertStatus(403);
+    }
+
+    public function test_company_supervisor_gives_placement_access(): void
+    {
+        // Company dengan CompanySupervisor (jalur lama) dapat mengakses
+        // data penempatan perusahaan mereka.
+        $companyUser = $this->createUser('company', 'company_a');
+        $company = $this->createCompany();
+        $period = $this->createPeriod();
+        $student = $this->createUser('student', 'student_a');
+        $placement = $this->createPlacement($student, $company, $period);
+        // Grant CompanySupervisor (not CompanyMembership)
+        $this->attachCompanySupervisor($companyUser, $company);
+
+        Sanctum::actingAs($companyUser);
+
+        // Company user dapat mengakses journals via authorizedCompanyIds
+        $this->getJson("/api/journals?placement_id={$placement->id}")
+            ->assertOk();
+
+        // Company user dapat mengakses attendance via authorizedCompanyIds
+        $this->getJson("/api/attendances?placement_id={$placement->id}")
+            ->assertOk();
+    }
+
+    public function test_supervisor_cannot_access_placement_outside_assignment(): void
+    {
+        // Pembimbing industri hanya boleh mengakses placement yang spesifik
+        // ditugaskan kepadanya (via supervisor_id, references company_supervisors),
+        // bukan semua placement perusahaan.
+        $supervisorUser = $this->createUser('supervisor', 'supervisor_a');
+        $company1 = $this->createCompany('PT Satu');
+        $company2 = $this->createCompany('PT Dua');
+        $period = $this->createPeriod();
+        $student1 = $this->createUser('student', 'student_a');
+        $student2 = $this->createUser('student', 'student_b');
+        $placement1 = $this->createPlacement($student1, $company1, $period);
+        $placement2 = $this->createPlacement($student2, $company2, $period);
+        // Assign CompanySupervisor to only placement1
+        $supervisorRecord = $this->attachCompanySupervisor($supervisorUser, $company1);
+        $placement1->update(['supervisor_id' => $supervisorRecord->id]);
+
+        Sanctum::actingAs($supervisorUser);
+
+        // Supervisor boleh mengakses placement1 (yang ditugaskan kepadanya)
+        $this->getJson("/api/journals?placement_id={$placement1->id}")
+            ->assertOk();
+
+        // Supervisor tidak boleh mengakses placement2 (diluar penugasan)
+        $this->getJson("/api/journals?placement_id={$placement2->id}")
+            ->assertStatus(403);
+    }
+
+    public function test_company_user_cannot_access_other_company_placement(): void
+    {
+        // Company user hanya dapat mengakses placement di perusahaannya sendiri.
+        $companyUser = $this->createUser('company', 'company_a');
+        $company1 = $this->createCompany('PT Satu');
+        $company2 = $this->createCompany('PT Dua');
+        $period = $this->createPeriod();
+        $student1 = $this->createUser('student', 'student_a');
+        $student2 = $this->createUser('student', 'student_b');
+
+        // Company membership only for company1
+        $this->attachCompanyMembership($companyUser, $company1);
+        $placement1 = $this->createPlacement($student1, $company1, $period);
+        $placement2 = $this->createPlacement($student2, $company2, $period);
+
+        Sanctum::actingAs($companyUser);
+
+        // Boleh akses placement perusahaan miliknya (company1)
+        $this->getJson("/api/journals?placement_id={$placement1->id}")
+            ->assertOk();
+
+        // Tidak boleh akses placement perusahaan lain (company2)
+        $this->getJson("/api/journals?placement_id={$placement2->id}")
+            ->assertStatus(403);
+    }
+
+    public function test_interview_scoped_to_authorized_company(): void
+    {
+        // Interview hanya terlihat oleh company yang berwenang atas
+        // lamaran yang ada di interview tersebut.
+        $companyUser = $this->createUser('company', 'company_a');
+        $company1 = $this->createCompany('PT Satu');
+        $company2 = $this->createCompany('PT Dua');
+        $period = $this->createPeriod();
+        $student = $this->createUser('student', 'student_a');
+
+        // Company user memiliki keanggotaan hanya untuk company1
+        $this->attachCompanyMembership($companyUser, $company1);
+
+        // Buat lamaran ke company1 dan company2
+        $app1 = $this->makeApplicationFor($student, $company1, $period, 1);
+        $app2 = $this->makeApplicationFor($student, $company2, $period, 2);
+        $app1->update(['status' => 'accepted']);
+        $app2->update(['status' => 'accepted']);
+
+        // Buat interview untuk kedua lamaran
+        $interview1 = \App\Models\Interview::create([
+            'application_id' => $app1->id,
+            'scheduled_at' => now()->addDay(),
+            'place' => 'Online',
+            'mode' => 'online',
+            'status' => 'scheduled',
+        ]);
+        $interview2 = \App\Models\Interview::create([
+            'application_id' => $app2->id,
+            'scheduled_at' => now()->addDay(),
+            'place' => 'Online',
+            'mode' => 'online',
+            'status' => 'scheduled',
+        ]);
+
+        Sanctum::actingAs($companyUser);
+
+        // Company user dapat lihat interview untuk lamaran company1
+        $this->getJson("/api/interviews/{$interview1->id}")->assertOk();
+
+        // Company user tidak boleh lihat interview untuk lamaran company2
+        $this->getJson("/api/interviews/{$interview2->id}")->assertNotFound();
+    }
+
+    public function test_application_review_scoped_to_authorized_company(): void
+    {
+        // Review hanya terlihat oleh company yang berwenang.
+        $companyUser = $this->createUser('company', 'company_a');
+        $company1 = $this->createCompany('PT Satu');
+        $company2 = $this->createCompany('PT Dua');
+        $period = $this->createPeriod();
+        $student = $this->createUser('student', 'student_a');
+
+        // Company user memiliki keanggotaan hanya untuk company1
+        $this->attachCompanyMembership($companyUser, $company1);
+
+        // Buat lamaran ke company1 dan company2
+        $app1 = $this->makeApplicationFor($student, $company1, $period, 1);
+        $app2 = $this->makeApplicationFor($student, $company2, $period, 2);
+
+        // Buat review untuk kedua lamaran
+        $review1 = $this->createReview($app1, $companyUser);
+        $review2 = $this->createReview($app2, $this->createUser('company', 'company_b'));
+
+        Sanctum::actingAs($companyUser);
+
+        // Company user dapat lihat review untuk lamaran company1
+        $this->getJson("/api/application-reviews/{$review1->id}")->assertOk();
+
+        // Company user tidak boleh lihat review untuk lamaran company2
+        $this->getJson("/api/application-reviews/{$review2->id}")->assertForbidden();
     }
 
     // ===================== JOURNAL RECOMMENDATION =====================

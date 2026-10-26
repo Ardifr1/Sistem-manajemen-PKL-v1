@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ApplicationReview;
 use App\Models\Company;
 use App\Models\PklApplication;
+use App\Support\PlacementQuota;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -43,13 +44,9 @@ class ApplicationReviewController extends Controller
 
         // Company hanya melihat review atas lamaran ke perusahaannya.
         if ($request->user()->role === 'company') {
-            $query->whereHas('application', function ($q) use ($request) {
-                $q->whereIn(
-                    'company_id',
-                    \App\Models\CompanySupervisor::query()
-                        ->where('user_id', $request->user()->id)
-                        ->select('company_id')
-                );
+            $companyIds = $this->authorizedCompanyIds($request->user());
+            $query->whereHas('application', function ($q) use ($companyIds) {
+                $q->whereIn('company_id', $companyIds);
             });
         }
 
@@ -216,21 +213,10 @@ class ApplicationReviewController extends Controller
      */
     private function quotaExceededMessage(Company $company, PklApplication $application): ?string
     {
-        $quota = (int) $company->student_quota;
+        $quotaError = PlacementQuota::errorMessage($company, (int) $application->pkl_period_id);
 
-        if ($quota <= 0) {
-            return 'Perusahaan tidak memiliki kuota siswa.';
-        }
-
-        $acceptedCount = PklApplication::query()
-            ->where('company_id', $company->id)
-            ->where('pkl_period_id', $application->pkl_period_id)
-            ->where('status', 'accepted')
-            ->lockForUpdate()
-            ->count();
-
-        if ($acceptedCount >= $quota) {
-            return 'Kuota siswa untuk perusahaan pada periode PKL ini sudah penuh.';
+        if ($quotaError !== null) {
+            return $quotaError;
         }
 
         return null;

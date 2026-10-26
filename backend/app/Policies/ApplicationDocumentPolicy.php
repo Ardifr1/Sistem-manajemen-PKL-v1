@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Models\ApplicationDocument;
+use App\Models\PklPlacement;
 use App\Models\User;
 
 class ApplicationDocumentPolicy
@@ -18,11 +19,18 @@ class ApplicationDocumentPolicy
 
     public function view(User $user, ApplicationDocument $document): bool
     {
-        if (in_array($user->role, [
-            'admin',
-            'teacher',
-        ], true)) {
+        if ($user->role === 'admin') {
             return true;
+        }
+
+        // Guru Pembimbing hanya boleh membaca dokumen siswa bimbingannya.
+        if ($user->role === 'teacher') {
+            $studentId = $document->application?->student_id;
+
+            return $studentId !== null && PklPlacement::query()
+                ->where('teacher_id', $user->id)
+                ->where('student_id', $studentId)
+                ->exists();
         }
 
         return $user->role === 'student'

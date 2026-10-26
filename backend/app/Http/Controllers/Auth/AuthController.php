@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
 use App\Models\PasswordResetRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -123,7 +124,8 @@ class AuthController extends Controller
                 $user->must_change_password ? 'nullable' : 'required',
                 'string',
             ],
-            'password' => ['required', 'string', 'min:8'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'password_confirmation' => ['required', 'string', 'min:8'],
         ]);
 
         if (
@@ -135,10 +137,31 @@ class AuthController extends Controller
             ], 422);
         }
 
+        if (
+            ! empty($validated['current_password'])
+            && Hash::check($validated['password'], $user->password)
+        ) {
+            return response()->json([
+                'message' => 'Password baru tidak boleh sama dengan password saat ini.',
+            ], 422);
+        }
+
         $user->update([
             'password' => $validated['password'],
             'must_change_password' => false,
             'activated_at' => $user->activated_at ?? now(),
+        ]);
+
+        $user->tokens()->delete();
+
+        AuditLog::create([
+            'user_id' => $user->id,
+            'action' => 'account.password_changed',
+            'subject_type' => User::class,
+            'subject_id' => $user->id,
+            'metadata' => [
+                'changed_by' => $user->id,
+            ],
         ]);
 
         return response()->json([
@@ -160,6 +183,17 @@ class AuthController extends Controller
 
         // Selalu balas sukses agar tidak membocorkan akun yang terdaftar.
         if ($user && $user->is_active) {
+            $cutoff = now()->subHours(
+                (int) config('simagang.password_reset.expires_hours', 72)
+            );
+
+            // Permintaan yang sudah lewat masa berlaku tidak boleh menahan
+            // pengajuan baru; tandai kedaluwarsa lebih dulu.
+            PasswordResetRequest::where('user_id', $user->id)
+                ->where('status', 'pending')
+                ->where('created_at', '<', $cutoff)
+                ->update(['status' => 'expired']);
+
             $exists = PasswordResetRequest::where('user_id', $user->id)
                 ->where('status', 'pending')
                 ->exists();

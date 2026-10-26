@@ -14,6 +14,7 @@ use App\Http\Controllers\Company\InterviewController;
 use App\Http\Controllers\Student\ApplicationDocumentController;
 use App\Http\Controllers\Student\CompanyProposalController;
 use App\Http\Controllers\Student\AttendanceController;
+use App\Http\Controllers\Student\JournalAssistantController;
 use App\Http\Controllers\Student\JournalController;
 use App\Http\Controllers\Student\JournalRecommendationController;
 use App\Http\Controllers\Student\ProgressRecordController;
@@ -68,6 +69,9 @@ Route::middleware(['auth:sanctum', 'account.active', 'password.changed'])->group
 
     // PKL Placement
     Route::apiResource('pkl-placements', PklPlacementController::class);
+    // Penugasan pembimbing industri oleh PERUSAHAAN penempatan (hanya
+    // supervisor_id; field lain tetap kewenangan admin lewat PUT).
+    Route::patch('/pkl-placements/{pklPlacement}/supervisor', [PklPlacementController::class, 'assignSupervisor']);
 
     // Schools (pengelompokan per sekolah, fondasi multi-sekolah)
     Route::apiResource('schools', SchoolController::class)->only(['index', 'show', 'store', 'update', 'destroy']);
@@ -76,6 +80,10 @@ Route::middleware(['auth:sanctum', 'account.active', 'password.changed'])->group
     Route::apiResource('journals', JournalController::class);
     Route::post('/journals/{journal}/submit', [JournalController::class, 'submit']);
     Route::post('/journals/{journal}/verify', [JournalController::class, 'verify']);
+    // AI Journal Assistant: saran untuk draf jurnal siswa. Dibatasi laju dan
+    // TIDAK mengubah status jurnal (verifikasi tetap oleh pembimbing industri).
+    Route::post('/journals/ai-assistant', [JournalAssistantController::class, 'review'])
+        ->middleware('throttle:ai-journal');
 
     Route::apiResource(
         'journal-recommendations',

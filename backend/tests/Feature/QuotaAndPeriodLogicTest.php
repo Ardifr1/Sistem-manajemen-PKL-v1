@@ -506,4 +506,200 @@ class QuotaAndPeriodLogicTest extends TestCase
         $this->assertSame($companyA->id, $oldApplication->company_id);
         $this->assertSame(1, $oldApplication->choice_order);
     }
+
+    // ===================== 4. QUOTA CONSISTENCY CHECKS =====================
+
+    public function test_company_cannot_accept_when_quota_full_via_approved(): void
+    {
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $company->update(['student_quota' => 1]);
+
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+
+        $applicationA = $this->makeApplicationFor($studentA, $company, $period);
+        $applicationB = $this->makeApplicationFor($studentB, $company, $period, 2);
+
+        $companyUser = $this->createUser('company', 'company_a');
+        $this->attachCompanySupervisor($companyUser, $company);
+
+        // Company accepts A (status accepted).
+        Sanctum::actingAs($companyUser);
+        $this->postJson('/api/application-reviews', [
+            'application_id' => $applicationA->id,
+            'status' => 'approved',
+        ])->assertCreated();
+
+        // Now quota should be 1/1 (accepted). B's acceptance must be rejected.
+        $this->postJson('/api/application-reviews', [
+            'application_id' => $applicationB->id,
+            'status' => 'approved',
+        ])->assertStatus(422);
+
+        // B remains pending, no review created.
+        $this->assertDatabaseHas('pkl_applications', [
+            'id' => $applicationB->id,
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_company_cannot_accept_when_quota_full_via_accepted_and_approved(): void
+    {
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $company->update(['student_quota' => 1]);
+
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+
+        // A's application becomes accepted (via company review).
+        $applicationA = $this->makeApplicationFor($studentA, $company, $period);
+        $companyUser = $this->createUser('company', 'company_a');
+        $this->attachCompanySupervisor($companyUser, $company);
+
+        Sanctum::actingAs($companyUser);
+        $this->postJson('/api/application-reviews', [
+            'application_id' => $applicationA->id,
+            'status' => 'approved',
+        ])->assertCreated();
+
+        // Now A = accepted (1 slot used). B tries to become accepted = over quota.
+        $applicationB = $this->makeApplicationFor($studentB, $company, $period, 2);
+
+        Sanctum::actingAs($companyUser);
+        $this->postJson('/api/application-reviews', [
+            'application_id' => $applicationB->id,
+            'status' => 'approved',
+        ])->assertStatus(422);
+
+        // B remains pending.
+        $this->assertDatabaseHas('pkl_applications', [
+            'id' => $applicationB->id,
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_company_can_accept_when_quota_available(): void
+    {
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $company->update(['student_quota' => 2]);
+
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+
+        $applicationA = $this->makeApplicationFor($studentA, $company, $period);
+        $applicationB = $this->makeApplicationFor($studentB, $company, $period, 2);
+
+        $companyUser = $this->createUser('company', 'company_a');
+        $this->attachCompanySupervisor($companyUser, $company);
+
+        Sanctum::actingAs($companyUser);
+
+        $this->postJson('/api/application-reviews', [
+            'application_id' => $applicationA->id,
+            'status' => 'approved',
+        ])->assertCreated();
+
+        $this->postJson('/api/application-reviews', [
+            'application_id' => $applicationB->id,
+            'status' => 'approved',
+        ])->assertCreated();
+
+        $this->assertSame(2, PklApplication::query()
+            ->where('company_id', $company->id)
+            ->where('status', 'accepted')
+            ->count());
+    }
+
+    public function test_company_cannot_accept_when_placement_consumes_quota(): void
+    {
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $company->update(['student_quota' => 1]);
+
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+
+        // Admin manually creates placement without application link (consumes quota via placement).
+        $this->createPlacement($studentA, $company, $period);
+
+        $applicationB = $this->makeApplicationFor($studentB, $company, $period);
+
+        $companyUser = $this->createUser('company', 'company_a');
+        $this->attachCompanySupervisor($companyUser, $company);
+
+        Sanctum::actingAs($companyUser);
+
+        // Accepting B's application must fail because placement already consumed the quota.
+        $this->postJson('/api/application-reviews', [
+            'application_id' => $applicationB->id,
+            'status' => 'approved',
+        ])->assertStatus(422);
+    }
+
+    public function test_quota_deduplicates_student_with_both_placement_and_application(): void
+    {
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $company->update(['student_quota' => 1]);
+
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+
+        $admin = $this->createUser('admin', 'admin_a');
+
+        // Admin creates placement for A AND the application stays accepted.
+        $applicationA = $this->makeApplicationFor($studentA, $company, $period);
+        $applicationA->update(['status' => 'accepted']);
+        $this->createPlacement($studentA, $company, $period, $applicationA);
+
+        $applicationB = $this->makeApplicationFor($studentB, $company, $period, 2);
+
+        $companyUser = $this->createUser('company', 'company_a');
+        $this->attachCompanySupervisor($companyUser, $company);
+
+        Sanctum::actingAs($companyUser);
+
+        // B's acceptance must be rejected — A is counted once (via placement or accepted
+        // application, not both), so quota (1) is already exhausted.
+        $this->postJson('/api/application-reviews', [
+            'application_id' => $applicationB->id,
+            'status' => 'approved',
+        ])->assertStatus(422);
+
+        $this->assertDatabaseHas('pkl_applications', [
+            'id' => $applicationB->id,
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_cancelled_placement_releases_quota(): void
+    {
+        $period = $this->createPeriod();
+        $company = $this->createCompany();
+        $company->update(['student_quota' => 1]);
+
+        $studentA = $this->createUser('student', 'student_a');
+        $studentB = $this->createUser('student', 'student_b');
+
+        $admin = $this->createUser('admin', 'admin_a');
+
+        // Create placement for A, then cancel it.
+        $placement = $this->createPlacement($studentA, $company, $period);
+        $placement->update(['status' => 'cancelled']);
+
+        Sanctum::actingAs($admin);
+
+        // B should be able to create a placement now — cancelled placement doesn't consume quota.
+        $this->postJson('/api/pkl-placements', [
+            'student_id' => $studentB->id,
+            'company_id' => $company->id,
+            'pkl_period_id' => $period->id,
+            'start_date' => $period->start_date,
+            'end_date' => $period->end_date,
+            'status' => 'active',
+        ])->assertCreated();
+    }
 }

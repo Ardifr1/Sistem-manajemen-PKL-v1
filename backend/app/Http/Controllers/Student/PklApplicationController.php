@@ -29,7 +29,9 @@ class PklApplicationController extends Controller
         ]);
 
         $user = $request->user();
-        $query = PklApplication::with(['company', 'pklPeriod'])
+        // `student` di-eager-load agar daftar lamaran menampilkan identitas
+        // pelamar (dipakai halaman review perusahaan & monitoring admin).
+        $query = PklApplication::with(['company', 'pklPeriod', 'student'])
             ->orderBy('choice_order');
 
         if (! empty($validated['student_id'])) {
@@ -289,6 +291,25 @@ class PklApplicationController extends Controller
                 // Buat penempatan resmi otomatis. Status `scheduled` bila
                 // tanggal mulai belum tiba; aktif otomatis saat tanggal mulai
                 // tiba (dievaluasi lazy saat daftar penempatan dibuka).
+                //
+                // teacher_id dan supervisor_id sengaja dibiarkan NULL pada
+                // tahap ini. Penugasan guru pembimbing (teacher_id) dan
+                // pembimbing industri (supervisor_id) harus dilakukan
+                // secara eksplisit oleh admin melalui endpoint
+                // /pkl-placements/{id} (PUT) atau melalui alur bisnis
+                // lain yang ada. Tidak ada mekanisme otomatis untuk
+                // menetapkan pembimbing saat penempatan dibuat, karena:
+                //   - teacher_id harus berasal dari guru yang ditugaskan
+                //     kepada siswa tersebut (tidak ada sumber data otomatis
+                //     yang menghubungkan guru ke siswa tanpa penugasan
+                //     eksplisit).
+                //   - supervisor_id harus berasal dari CompanySupervisor
+                //     yang benar-benar terkait dengan perusahaan dan
+                //     penempatan tersebut (tidak ada sumber data otomatis
+                //     yang menghubungkan supervisor ke placement).
+                // Menetapkan pembimbing secara acak atau mengambil
+                // pengguna pertama akan menghasilkan data yang tidak
+                // memiliki hubungan sah dengan siswa/perusahaan.
                 $today = now()->toDateString();
                 $placement = PklPlacement::create([
                     'student_id' => $pklApplication->student_id,
@@ -501,20 +522,13 @@ class PklApplicationController extends Controller
                     ->lockForUpdate()
                     ->first();
 
-                $quota = (int) $company->student_quota;
+                $quotaError = PlacementQuota::errorMessage(
+                    $company,
+                    (int) $pklApplication->pkl_period_id
+                );
 
-                if ($quota <= 0) {
-                    return ['error' => 'Perusahaan tidak memiliki kuota siswa.'];
-                }
-
-                $committed = PklApplication::query()
-                    ->where('company_id', $company->id)
-                    ->where('pkl_period_id', $pklApplication->pkl_period_id)
-                    ->whereIn('status', ['accepted', 'approved'])
-                    ->count();
-
-                if ($committed >= $quota) {
-                    return ['error' => 'Kuota siswa untuk perusahaan pada periode PKL ini sudah penuh.'];
+                if ($quotaError !== null) {
+                    return ['error' => $quotaError];
                 }
             }
 

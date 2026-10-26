@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ApplicationDocument;
 use App\Models\PklApplication;
 use App\Models\PklPlacement;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -13,8 +14,12 @@ use Illuminate\Support\Facades\Storage;
 
 class ApplicationDocumentController extends Controller
 {
+    use ResolvesCompanyAccess;
     public function index(Request $request): JsonResponse
     {
+        // Policy viewAny sengaja tidak dipakai di sini: perusahaan perlu
+        // meninjau dokumen lamaran masuk, sementara cakupan query di bawah
+        // sudah membatasi per peran (perusahaan, guru, pembimbing industri).
         $validated = $request->validate([
             'application_id' => ['nullable', 'integer', 'exists:pkl_applications,id'],
         ]);
@@ -43,12 +48,26 @@ class ApplicationDocumentController extends Controller
                             ->where('teacher_id', $user->id)
                             ->select('student_id')
                     );
-                } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
-                    $companyId = $user->companySupervisor?->company_id;
-                    if ($companyId) {
-                        $q->where('company_id', $companyId);
-                    } else {
+                } elseif ($user->role === 'company') {
+                    $companyIds = $this->authorizedCompanyIds($user);
+                    if ($companyIds === []) {
                         $q->whereRaw('1 = 0');
+                    } else {
+                        $q->whereIn('company_id', $companyIds);
+                    }
+                } elseif ($user->role === 'supervisor') {
+                    // BR-09a: pembimbing industri hanya melihat dokumen
+                    // lamaran siswa yang ditugaskan kepadanya.
+                    $supervisor = $user->companySupervisor;
+                    if (! $supervisor) {
+                        $q->whereRaw('1 = 0');
+                    } else {
+                        $q->whereIn(
+                            'student_id',
+                            PklPlacement::query()
+                                ->where('supervisor_id', $supervisor->id)
+                                ->select('student_id')
+                        );
                     }
                 }
             });
@@ -78,28 +97,61 @@ class ApplicationDocumentController extends Controller
     {
         Gate::authorize('view', $applicationDocument);
 
-        $path = $applicationDocument->file_path;
+        $path = (string) $applicationDocument->file_path;
 
-        // Kalau URL, redirect ke URL-nya
-        if (preg_match('#^https?://#i', $path)) {
+        // Tautan eksternal hanya boleh http/https. Skema lain (mis. file://,
+        // javascript:) ditolak agar dokumen tidak menjadi jalur redirect/
+        // eksekusi yang berbahaya saat diunduh.
+        if (str_contains($path, '://')) {
+            $scheme = strtolower((string) parse_url($path, PHP_URL_SCHEME));
+
+            if (! in_array($scheme, ['http', 'https'], true)) {
+                abort(404, 'Berkas tidak ditemukan.');
+            }
+
             return redirect()->away($path);
         }
 
-        if (! Storage::disk('public')->exists($path)) {
+        // Berkas lokal wajib berada di direktori dokumen pengajuan dan tidak
+        // boleh memakai path traversal (../../) untuk keluar dari folder itu.
+        $normalized = str_replace('\\', '/', $path);
+
+        if (
+            str_contains($normalized, '..')
+            || ! str_starts_with($normalized, 'application-documents/')
+        ) {
+            abort(404, 'Berkas tidak ditemukan.');
+        }
+
+        if (! Storage::disk('public')->exists($normalized)) {
             abort(404, 'File tidak ditemukan.');
         }
 
-        return Storage::disk('public')->download($path, $applicationDocument->document_name);
+        return Storage::disk('public')->download($normalized, $applicationDocument->document_name);
     }
 
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'application_id' => ['required', 'integer', 'exists:pkl_applications,id'],
-            'document_type' => ['required', 'string', 'max:100'],
+            // Jenis dokumen dibatasi pada daftar yang dikenal (sama dengan
+            // aturan update) agar nilai bebas tidak masuk ke basis data.
+            'document_type' => ['required', 'string', 'in:ktp,ijazah,skck,surat_rekomendasi,others'],
             'document_name' => ['required', 'string', 'max:255'],
             'file' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png,doc,docx', 'max:5120'],
-            'file_url' => ['nullable', 'url', 'max:2048'],
+            'file_url' => [
+                'nullable',
+                'url',
+                'max:2048',
+                // Hanya tautan http/https yang boleh disimpan; skema lain
+                // (ftp, file, javascript) ditolak.
+                function (string $attribute, mixed $value, \Closure $fail) {
+                    $scheme = strtolower((string) parse_url((string) $value, PHP_URL_SCHEME));
+                    if (! in_array($scheme, ['http', 'https'], true)) {
+                        $fail('Tautan dokumen harus menggunakan http atau https.');
+                    }
+                },
+            ],
         ]);
 
         // Harus ada file ATAU url

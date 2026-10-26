@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Student;
 use App\Http\Controllers\Controller;
 use App\Models\Journal;
 use App\Models\PklPlacement;
+use App\Policies\Concerns\ResolvesCompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -12,6 +13,7 @@ use Illuminate\Validation\Rule;
 
 class JournalController extends Controller
 {
+    use ResolvesCompanyAccess;
     public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', Journal::class);
@@ -46,12 +48,21 @@ class JournalController extends Controller
                     $q->where('student_id', $user->id);
                 } elseif ($user->role === 'teacher') {
                     $q->where('teacher_id', $user->id);
-                } elseif (in_array($user->role, ['company', 'supervisor'], true)) {
-                    $companyId = $user->companySupervisor?->company_id;
-                    if ($companyId) {
-                        $q->where('company_id', $companyId);
+                } elseif ($user->role === 'company') {
+                    $companyIds = $this->authorizedCompanyIds($user);
+                    if ($companyIds === []) {
+                        $q->whereRaw('1 = 0');
                     } else {
-                        $q->whereRaw('1 = 0'); // belum ditautkan: kosong
+                        $q->whereIn('company_id', $companyIds);
+                    }
+                } elseif ($user->role === 'supervisor') {
+                    // BR-09a: pembimbing industri hanya melihat jurnal siswa
+                    // yang secara spesifik ditugaskan kepadanya.
+                    $supervisor = $user->companySupervisor;
+                    if (! $supervisor) {
+                        $q->whereRaw('1 = 0');
+                    } else {
+                        $q->where('supervisor_id', $supervisor->id);
                     }
                 }
                 // admin: semua

@@ -11,9 +11,12 @@ const TABS = [
 
 function PengajuanMagang({ onMeta }) {
   const [apps, setApps] = useState([]);
+  const [placements, setPlacements] = useState([]);
   const [tab, setTab] = useState("all");
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(null);
+  const [assignError, setAssignError] = useState("");
+  const [assignSaving, setAssignSaving] = useState(false);
   const [supervisors, setSupervisors] = useState([]);
   const [selSup, setSelSup] = useState(null);
   const [scheduling, setScheduling] = useState(null);
@@ -25,8 +28,12 @@ function PengajuanMagang({ onMeta }) {
 
   const load = async () => {
     try {
-      const r = await applicationsApi.index();
-      setApps(Array.isArray(r) ? r : r?.data || []);
+      const [appRes, plRes] = await Promise.all([
+        applicationsApi.index(),
+        placementsApi.index().catch(() => ({ data: [] })),
+      ]);
+      setApps(Array.isArray(appRes) ? appRes : appRes?.data || []);
+      setPlacements(Array.isArray(plRes) ? plRes : plRes?.data || []);
     } finally {
       setLoading(false);
     }
@@ -63,9 +70,20 @@ function PengajuanMagang({ onMeta }) {
     }
   };
 
+  // Penempatan resmi baru ada setelah siswa memilih tawaran yang diterima;
+  // pembimbing industri ditugaskan pada penempatan tersebut (bukan lamaran).
+  const placementFor = (a) =>
+    placements.find((p) => String(p.application_id) === String(a.id)) || null;
+
   const openAssign = async (a) => {
-    setAssigning(a);
+    const placement = placementFor(a);
+    if (!placement) {
+      alert("Siswa belum memilih tawaran ini sebagai tujuan PKL, sehingga penempatan resmi belum tersedia.");
+      return;
+    }
+    setAssigning({ app: a, placement });
     setSelSup(null);
+    setAssignError("");
     try {
       const r = await supervisorsApi.index();
       setSupervisors(Array.isArray(r) ? r : r?.data || []);
@@ -76,11 +94,16 @@ function PengajuanMagang({ onMeta }) {
 
   const doAssign = async () => {
     if (!assigning || !selSup) return;
+    setAssignSaving(true);
+    setAssignError("");
     try {
-      await placementsApi.update(assigning.placement_id || assigning.id, { supervisor_id: selSup });
+      await placementsApi.assignSupervisor(assigning.placement.id, selSup);
       setAssigning("done");
+      load();
     } catch (e) {
-      alert(e?.message || "Gagal menugaskan pembimbing.");
+      setAssignError(e?.message || "Gagal menugaskan pembimbing.");
+    } finally {
+      setAssignSaving(false);
     }
   };
 
@@ -183,8 +206,16 @@ function PengajuanMagang({ onMeta }) {
                       <button type="button" className="zip-btn-danger" onClick={() => act(a, "rejected")}>Tolak</button>
                     </>
                   )}
-                  {a.status === "accepted" && (
-                    <button type="button" className="zip-btn-outline" onClick={() => openAssign(a)}>Tugaskan Pembimbing →</button>
+                  {(a.status === "accepted" || a.status === "approved") && (
+                    placementFor(a) ? (
+                      <button type="button" className="zip-btn-outline" onClick={() => openAssign(a)}>
+                        {placementFor(a).supervisor_id ? "Ganti Pembimbing →" : "Tugaskan Pembimbing →"}
+                      </button>
+                    ) : (
+                      <span className="zip-muted" style={{ fontSize: 12 }}>
+                        Menunggu siswa memilih tujuan PKL
+                      </span>
+                    )
                   )}
                 </div>
               </div>
@@ -201,20 +232,23 @@ function PengajuanMagang({ onMeta }) {
             <h2>Tugaskan Pembimbing</h2>
             <div className="sub">Pilih pembimbing industri untuk siswa yang diterima</div>
             <div className="zip-popt" style={{ cursor: "default", marginBottom: 18 }}>
-              <div><div className="nm">{assigning.student?.name || "-"} <span style={{ color: "#94a3b8", fontWeight: 400 }}>({assigning.position || "-"})</span></div>
-              <div style={{ fontSize: 12, color: "#94a3b8" }}>{assigning.student?.class || ""} • Diterima</div></div>
+              <div><div className="nm">{assigning.app.student?.name || "-"} <span style={{ color: "#94a3b8", fontWeight: 400 }}>({assigning.app.position || "-"})</span></div>
+              <div style={{ fontSize: 12, color: "#94a3b8" }}>{assigning.app.student?.class || ""} • Diterima</div></div>
             </div>
+            {assignError && <div className="zip-error">{assignError}</div>}
             <div className="zip-label" style={{ marginBottom: 8 }}>Pembimbing Industri</div>
             {supervisors.map((s) => (
               <div key={s.id} className={`zip-popt${selSup === s.id ? " sel" : ""}`} onClick={() => setSelSup(s.id)}>
-                <div><div className="nm">{s.name}</div><div style={{ fontSize: 12, color: "#94a3b8" }}>{s.position || s.jabatan || ""}</div></div>
+                <div><div className="nm">{s.user?.name || s.name}</div><div style={{ fontSize: 12, color: "#94a3b8" }}>{s.position || s.jabatan || ""}</div></div>
                 <span className="zip-count">{s.students_count ?? "?"} siswa</span>
               </div>
             ))}
             {supervisors.length === 0 && <div className="zip-muted">Belum ada pembimbing. Tambahkan di menu Pembimbing.</div>}
             <div className="zip-actions" style={{ justifyContent: "flex-end", marginTop: 20 }}>
               <button type="button" className="zip-btn-outline" onClick={() => setAssigning(null)}>Batal</button>
-              <button type="button" className="zip-btn-primary" disabled={!selSup} onClick={doAssign}>Tugaskan</button>
+              <button type="button" className="zip-btn-primary" disabled={!selSup || assignSaving} onClick={doAssign}>
+                {assignSaving ? "Menyimpan…" : "Tugaskan"}
+              </button>
             </div>
           </div>
         </div>

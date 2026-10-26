@@ -19,6 +19,20 @@ class TestAccountsSeeder extends Seeder
      */
     public function run(): void
     {
+        // Akun demo memakai password bawaan yang diketahui publik. Di
+        // production seeder ini harus dinyalakan secara eksplisit agar tidak
+        // meninggalkan akun berisiko pada instalasi nyata.
+        if (
+            app()->environment('production')
+            && ! config('simagang.demo.seed_accounts', false)
+        ) {
+            $this->command?->warn(
+                'TestAccountsSeeder dilewati: akun demo tidak diizinkan di production tanpa SEED_DEMO_ACCOUNTS=true.'
+            );
+
+            return;
+        }
+
         $accounts = [
             [
                 'name' => 'Admin Sekolah',

@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Company;
+use App\Models\PklApplication;
 use App\Models\PklPlacement;
 
 /**
@@ -27,7 +28,27 @@ class PlacementQuota
             return 'Perusahaan tidak memiliki kuota siswa.';
         }
 
-        $used = PklPlacement::query()
+        $used = self::usedStudentCount($company, $periodId, $ignorePlacementId);
+
+        if ($used >= $quota) {
+            return 'Kuota siswa untuk perusahaan pada periode PKL ini sudah penuh.';
+        }
+
+        return null;
+    }
+
+    /**
+     * Hitung jumlah siswa unik yang sudah berkontribusi pada kuota perusahaan
+     * untuk periode tertentu. Siswa yang memiliki penempatan aktif (non-cancelled)
+     * atau aplikasi accepted/approved dikira satu slot yang sama — tanpa
+     * menghitung siswa yang sama dua kali.
+     */
+    public static function usedStudentCount(
+        Company $company,
+        int $periodId,
+        ?int $ignorePlacementId = null
+    ): int {
+        $placementStudentIds = PklPlacement::query()
             ->where('company_id', $company->id)
             ->where('pkl_period_id', $periodId)
             ->where('status', '!=', 'cancelled')
@@ -35,12 +56,18 @@ class PlacementQuota
                 $ignorePlacementId !== null,
                 fn ($q) => $q->where('id', '!=', $ignorePlacementId)
             )
-            ->count();
+            ->pluck('student_id')
+            ->unique()
+            ->all();
 
-        if ($used >= $quota) {
-            return 'Kuota siswa untuk perusahaan pada periode PKL ini sudah penuh.';
-        }
+        $applicationStudentIds = PklApplication::query()
+            ->where('company_id', $company->id)
+            ->where('pkl_period_id', $periodId)
+            ->whereIn('status', ['accepted', 'approved'])
+            ->pluck('student_id')
+            ->unique()
+            ->all();
 
-        return null;
+        return count(array_unique([...$placementStudentIds, ...$applicationStudentIds]));
     }
 }

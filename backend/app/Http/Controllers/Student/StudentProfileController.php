@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Student;
 use App\Http\Controllers\Controller;
 use App\Models\PklPlacement;
 use App\Models\StudentProfile;
+use App\Models\User;
 use App\Policies\Concerns\ResolvesCompanyAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,8 +18,11 @@ class StudentProfileController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        // Hanya admin/guru yang dapat menelusuri seluruh profil siswa.
-        if (! in_array($request->user()->role, ['admin', 'teacher'], true)) {
+        $user = $request->user();
+
+        // Admin dapat menelusuri seluruh profil siswa; guru hanya siswa
+        // yang berada dalam bimbingannya.
+        if (! in_array($user->role, ['admin', 'teacher'], true)) {
             abort(403);
         }
 
@@ -34,7 +38,23 @@ class StudentProfileController extends Controller
             ->with('user')
             ->orderBy('id');
 
+        if ($user->role === 'teacher') {
+            $query->whereIn(
+                'user_id',
+                PklPlacement::query()
+                    ->where('teacher_id', $user->id)
+                    ->select('student_id')
+            );
+        }
+
         if (isset($validated['user_id'])) {
+            if (
+                $user->role === 'teacher'
+                && ! $this->teacherSupervisesStudent((int) $user->id, (int) $validated['user_id'])
+            ) {
+                abort(403);
+            }
+
             $query->where('user_id', $validated['user_id']);
         }
 
@@ -56,10 +76,17 @@ class StudentProfileController extends Controller
             abort(403);
         }
 
-        // Perusahaan/pembimbing industri hanya boleh melihat profil siswa yang
-        // ditempatkan di perusahaannya (data pribadi tidak boleh lintas
-        // perusahaan/penempatan).
-        if (in_array($user->role, ['company', 'supervisor'], true)) {
+        // Guru pembimbing hanya boleh melihat profil siswa bimbingannya.
+        if (
+            $user->role === 'teacher'
+            && ! $this->teacherSupervisesStudent((int) $user->id, (int) $studentProfile->user_id)
+        ) {
+            abort(403);
+        }
+
+        // Perusahaan hanya boleh melihat profil siswa yang ditempatkan di
+        // perusahaannya (data pribadi tidak boleh lintas perusahaan).
+        if ($user->role === 'company') {
             $companyIds = $this->authorizedCompanyIds($user);
 
             $related = $companyIds !== [] && PklPlacement::query()
@@ -70,6 +97,14 @@ class StudentProfileController extends Controller
             if (! $related) {
                 abort(403);
             }
+        }
+
+        // Pembimbing industri hanya boleh melihat profil siswa yang
+        // placement-nya secara spesifik ditugaskan kepadanya
+        // (pkl_placements.supervisor_id), bukan seluruh siswa pada
+        // perusahaan yang sama.
+        if ($user->role === 'supervisor' && ! $this->supervisorAssignedStudent($user, (int) $studentProfile->user_id)) {
+            abort(403);
         }
 
         if (! in_array($user->role, ['admin', 'teacher', 'student', 'company', 'supervisor'], true)) {
@@ -275,6 +310,33 @@ class StudentProfileController extends Controller
             'message' => 'Profil siswa berhasil diperbarui.',
             'data' => $studentProfile,
         ]);
+    }
+
+    private function teacherSupervisesStudent(int $teacherId, int $studentId): bool
+    {
+        return PklPlacement::query()
+            ->where('teacher_id', $teacherId)
+            ->where('student_id', $studentId)
+            ->exists();
+    }
+
+    /**
+     * BR-09a: apakah siswa benar-benar ditugaskan kepada pembimbing industri
+     * yang sedang login (placement.supervisor_id = baris company_supervisors
+     * milik user tersebut).
+     */
+    private function supervisorAssignedStudent(User $user, int $studentId): bool
+    {
+        $supervisor = $user->companySupervisor;
+
+        if (! $supervisor) {
+            return false;
+        }
+
+        return PklPlacement::query()
+            ->where('student_id', $studentId)
+            ->where('supervisor_id', $supervisor->id)
+            ->exists();
     }
 
     public function destroy(Request $request, StudentProfile $studentProfile): JsonResponse

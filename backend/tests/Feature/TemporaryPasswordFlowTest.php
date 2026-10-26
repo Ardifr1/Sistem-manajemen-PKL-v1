@@ -175,6 +175,7 @@ class TemporaryPasswordFlowTest extends TestCase
         // password sementara itu, jadi tidak perlu diketik ulang.
         $this->postJson('/api/change-password', [
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertOk();
 
         $user->refresh();
@@ -198,6 +199,7 @@ class TemporaryPasswordFlowTest extends TestCase
         $this->postJson('/api/change-password', [
             'current_password' => 'bukanPasswordnya1',
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertUnprocessable();
 
         $this->assertTrue((bool) $user->refresh()->must_change_password);
@@ -220,18 +222,21 @@ class TemporaryPasswordFlowTest extends TestCase
         // Tanpa current_password → ditolak (bukan alur paksa).
         $this->postJson('/api/change-password', [
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertUnprocessable();
 
         // Current password salah → ditolak.
         $this->postJson('/api/change-password', [
             'current_password' => 'salahTotal123',
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertUnprocessable();
 
         // Current password benar → berhasil.
         $this->postJson('/api/change-password', [
             'current_password' => 'passwordLama123',
             'password' => 'passwordBaru123',
+            'password_confirmation' => 'passwordBaru123',
         ])->assertOk();
 
         $this->assertTrue(Hash::check('passwordBaru123', $user->refresh()->password));

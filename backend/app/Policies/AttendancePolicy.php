@@ -12,7 +12,13 @@ class AttendancePolicy
 
     public function viewAny(User $user): bool
     {
-        return in_array($user->role, ['admin', 'teacher', 'student'], true);
+        return in_array($user->role, [
+            'admin',
+            'teacher',
+            'student',
+            'company',
+            'supervisor',
+        ], true);
     }
 
     public function view(User $user, Attendance $attendance): bool
@@ -29,6 +35,17 @@ class AttendancePolicy
         if ($user->role === 'company') {
             return $attendance->placement
                 && $this->isAuthorizedForCompany($user, $attendance->placement->company_id);
+        }
+
+        // BR-09a: pembimbing industri hanya boleh membuka absensi siswa yang
+        // ditugaskan kepadanya — konsisten dengan scoping daftar absensi.
+        if ($user->role === 'supervisor') {
+            $supervisor = $user->companySupervisor;
+
+            return $supervisor !== null
+                && $attendance->placement !== null
+                && $attendance->placement->supervisor_id !== null
+                && (int) $attendance->placement->supervisor_id === (int) $supervisor->id;
         }
 
         return false;

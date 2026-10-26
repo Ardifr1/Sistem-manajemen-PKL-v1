@@ -56,8 +56,10 @@ import * as usersMock from "./mock/users.js";
 import * as usersLive from "./live/users.js";
 import * as dashboardMock from "./mock/dashboard.js";
 import * as schoolsMock from "./mock/schools.js";
+import * as aiMock from "./mock/ai.js";
 import * as dashboardLive from "./live/dashboard.js";
 import * as schoolsLive from "./live/schools.js";
+import * as aiLive from "./live/ai.js";
 
 const pick = (mockMod, liveMod) => (USE_MOCK ? mockMod : liveMod);
 
@@ -79,6 +81,7 @@ export const profilesApi = pick(profilesMock, profilesLive);
 export const usersApi = pick(usersMock, usersLive);
 export const dashboardApi = pick(dashboardMock, dashboardLive);
 export const schoolsApi = pick(schoolsMock, schoolsLive);
+export const aiApi = pick(aiMock, aiLive);
 
 // Sub-modul bernama (bentuk alternatif akses) — mengikuti flag yang sama.
 export const supervisorsApi = pick(companiesMock, companiesLive).supervisorsApi;

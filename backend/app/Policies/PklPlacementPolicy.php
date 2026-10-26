@@ -82,4 +82,18 @@ class PklPlacementPolicy
     {
         return $user->role === 'admin';
     }
+
+    /**
+     * Penugasan pembimbing industri (placement.supervisor_id) oleh perusahaan.
+     *
+     * Hanya role company yang berwenang atas perusahaan penempatan tersebut
+     * yang boleh menetapkan/mengganti pembimbing industri. Endpoint khusus ini
+     * sengaja terpisah dari update() agar perusahaan tidak dapat mengubah
+     * teacher_id, company_id, status, atau field lain milik admin.
+     */
+    public function assignSupervisor(User $user, PklPlacement $placement): bool
+    {
+        return $user->role === 'company'
+            && $this->isAuthorizedForCompany($user, (int) $placement->company_id);
+    }
 }
